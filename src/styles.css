@@ -24,7 +24,7 @@ button {
   min-height: 100vh;
   width: min(1120px, calc(100% - 28px));
   margin: 0 auto;
-  padding: 28px 0 40px;
+  padding: 28px 0 100px;
 }
 
 .hero {
@@ -1341,5 +1341,168 @@ button {
 
   .stat-value {
     font-size: 15px;
+  }
+}
+
+.bottom-action-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.95), rgba(15, 23, 42, 0.98));
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  backdrop-filter: blur(10px);
+  z-index: 50;
+}
+
+.bottom-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 60px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 120ms ease, opacity 150ms ease, box-shadow 200ms ease;
+  position: relative;
+  color: #0f172a;
+}
+
+.bottom-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.bottom-btn:disabled,
+.bottom-btn.btn-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.bottom-btn-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.bottom-btn-text {
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.bottom-btn-count {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  background: rgba(15, 23, 42, 0.8);
+  color: #f8fafc;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 10px;
+  min-width: 20px;
+  text-align: center;
+}
+
+.bottom-btn-badge {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  background: #22c55e;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: badge-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(34, 197, 94, 0.4); }
+  50% { box-shadow: 0 0 10px rgba(34, 197, 94, 0.7); }
+}
+
+.bottom-btn-restart {
+  background: linear-gradient(135deg, #f8fafc, #cbd5e1);
+  box-shadow: 0 4px 12px rgba(148, 163, 184, 0.2);
+}
+
+.bottom-btn-potion {
+  background: linear-gradient(135deg, #a78bfa, #7c3aed);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(167, 139, 250, 0.3);
+}
+
+.bottom-btn-next {
+  background: linear-gradient(135deg, #34d399, #059669);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(34, 197, 94, 0.3);
+}
+
+.bottom-btn-next:not(:disabled) {
+  animation: next-glow 2s ease-in-out infinite;
+}
+
+@keyframes next-glow {
+  0%, 100% { box-shadow: 0 4px 12px rgba(34, 197, 94, 0.3); }
+  50% { box-shadow: 0 4px 20px rgba(34, 197, 94, 0.5), 0 0 15px rgba(34, 197, 94, 0.2); }
+}
+
+@media (min-width: 821px) {
+  .bottom-action-bar {
+    display: none;
+  }
+
+  .game-shell {
+    padding-bottom: 40px;
+  }
+}
+
+@media (max-width: 820px) {
+  .game-shell {
+    padding-bottom: 110px;
+  }
+
+  .bottom-btn-icon {
+    font-size: 20px;
+  }
+
+  .bottom-btn-text {
+    font-size: 11px;
+  }
+
+  .side-panel .actions {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .bottom-action-bar {
+    gap: 6px;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .bottom-btn {
+    min-height: 56px;
+    padding: 6px 8px;
+    border-radius: 10px;
+  }
+
+  .bottom-btn-icon {
+    font-size: 18px;
+  }
+
+  .bottom-btn-text {
+    font-size: 10px;
   }
 }

@@ -311,6 +311,11 @@ export default function App() {
     [board]
   );
 
+  const canUsePotion = status === "playing" && !showSettlement && potions > 0 && hp < MAX_HP;
+  const canGoNextFloor = status === "won" && !showSettlement && exitRevealed && keys > 0;
+  const canRestart = !showSettlement;
+  const canFlip = status === "playing" && !showSettlement && battleState === "idle";
+
   const triggerSettlement = useCallback(
     (resultType: GameResultType, currentFloor: number, currentCoins: number, currentStats: GameStats, currentHp: number) => {
       const isFloorRecord = currentFloor > highScore.maxFloor;
@@ -339,7 +344,7 @@ export default function App() {
 
   const flip = useCallback(
     (idx: number) => {
-      if (status !== "playing") return;
+      if (!canFlip) return;
       const room = board[idx];
       if (room.revealed) {
         if (room.type === "exit" && keys > 0) {
@@ -535,7 +540,7 @@ export default function App() {
       setStats(newStats);
       setHistory((prev: TurnRecord[]) => [...records, ...prev]);
     },
-    [board, hp, coins, keys, potions, status, flippable, exitRevealed, turn, floor, stats, triggerSettlement]
+    [board, hp, coins, keys, potions, status, flippable, exitRevealed, turn, floor, stats, triggerSettlement, canFlip]
   );
 
   const handleRestart = useCallback(() => {
@@ -943,11 +948,9 @@ export default function App() {
           {board.map((room: Room, idx: number) => {
             const isFlippable = flippable.has(idx) && !room.revealed;
             const canClickExit =
-              room.revealed && room.type === "exit" && keys > 0 && status === "playing";
+              room.revealed && room.type === "exit" && keys > 0 && canFlip;
             const isDefeated = room.type === "monster" && room.defeated;
-            const isDisabled =
-              (status !== "playing" && !room.revealed) ||
-              (battleState !== "idle" && !room.revealed);
+            const isDisabled = !canFlip && !room.revealed;
             return (
               <button
                 key={idx}
@@ -1001,24 +1004,24 @@ export default function App() {
             </div>
           </div>
           <div className="actions">
-            <button className="btn-reset" onClick={handleRestart}>
+            <button
+              className="btn-reset"
+              onClick={handleRestart}
+              disabled={!canRestart}
+            >
               重新探索
             </button>
             <button
-              className={[
-                "btn-potion",
-                potions <= 0 || hp >= MAX_HP || status !== "playing" ? "btn-disabled" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
+              className={["btn-potion", !canUsePotion ? "btn-disabled" : ""].filter(Boolean).join(" ")}
               onClick={usePotion}
+              disabled={!canUsePotion}
             >
               使用药水 (🧪 × 1 → {EVENT_CONFIG.potion.healAmount ?? BATTLE_CONFIG.potionHeal}❤️)
             </button>
             <button
               className="btn-next"
               onClick={nextFloor}
-              disabled={status !== "won"}
+              disabled={!canGoNextFloor}
             >
               进入下一层
             </button>
@@ -1097,6 +1100,35 @@ export default function App() {
               ? `💀 探索失败，在B${floor}F血量归零。共获得${coins}💰金币，到达B${floor}F。点击「重新探索」从B1F再次挑战！`
               : `正在探索B${floor}F，血量${hp}/${MAX_HP}❤️，金币${coins}💰，药水${potions}🧪，${keys > 0 ? "已持有钥匙🔑，赶快找到出口🚪！" : "尚未找到钥匙🔑，继续翻开相邻房间小心前进！"}本层有${floorCfg.trapCt}个陷阱⚡和${floorCfg.monsterCt}只怪物👹，谨慎行动！`}
         </p>
+      </section>
+
+      <section className="bottom-action-bar">
+        <button
+          className={["bottom-btn", "bottom-btn-restart", !canRestart ? "btn-disabled" : ""].filter(Boolean).join(" ")}
+          onClick={handleRestart}
+          disabled={!canRestart}
+        >
+          <span className="bottom-btn-icon">🔄</span>
+          <span className="bottom-btn-text">重新探索</span>
+        </button>
+        <button
+          className={["bottom-btn", "bottom-btn-potion", !canUsePotion ? "btn-disabled" : ""].filter(Boolean).join(" ")}
+          onClick={usePotion}
+          disabled={!canUsePotion}
+        >
+          <span className="bottom-btn-icon">🧪</span>
+          <span className="bottom-btn-text">使用药水</span>
+          <span className="bottom-btn-count">{potions}</span>
+        </button>
+        <button
+          className={["bottom-btn", "bottom-btn-next", !canGoNextFloor ? "btn-disabled" : ""].filter(Boolean).join(" ")}
+          onClick={nextFloor}
+          disabled={!canGoNextFloor}
+        >
+          <span className="bottom-btn-icon">⬆️</span>
+          <span className="bottom-btn-text">下一层</span>
+          {exitRevealed && keys > 0 && <span className="bottom-btn-badge">✓</span>}
+        </button>
       </section>
 
       {battleState !== "idle" && currentMonster && (
