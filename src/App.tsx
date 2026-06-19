@@ -754,20 +754,35 @@ export default function App() {
   }, [potions, hp, status, turn, floor]);
 
   const endBattle = useCallback(
-    (result: "won" | "lost" | "fled", finalMonster: Monster | null) => {
+    (result: "won" | "lost" | "fled", finalMonster: Monster | null, settleDelay: number = 1200) => {
+      let finalCoins = coins;
+      let finalStats = stats;
+      let finalHp = hp;
+      let finalFleeDamage = 0;
+
       setBattleState(result);
+
       if (result === "won" && finalMonster) {
         const gotPotion = Math.random() < finalMonster.potionDropChance;
         if (gotPotion) {
           setPotions((p) => p + 1);
         }
-        setCoins((c) => c + finalMonster.coinReward);
-        setStats((s) => ({ ...s, monstersDefeated: s.monstersDefeated + 1 }));
+        finalCoins = coins + finalMonster.coinReward;
+        finalStats = { ...stats, monstersDefeated: stats.monstersDefeated + 1 };
+        setCoins(finalCoins);
+        setStats(finalStats);
         setBoard((prev: Room[]) =>
           prev.map((r: Room, i: number) =>
             i === battleRoomIdx ? { ...r, defeated: true } : r
           )
         );
+        setBattleLog((prev) => [
+          ...prev,
+          createBattleLog(
+            `🎉 胜利！获得 ${finalMonster.coinReward} 金币${gotPotion ? "，掉落 1 瓶药水🧪" : ""}`,
+            "reward"
+          ),
+        ]);
         setHistory((prev: TurnRecord[]) => [
           {
             id: ++recordIdCounter,
@@ -782,17 +797,9 @@ export default function App() {
           ...prev,
         ]);
       } else if (result === "fled") {
-        const fleeDamage = 1;
-        setHp((h) => {
-          const newHp = Math.max(0, h - fleeDamage);
-          if (newHp <= 0) {
-            setStatus("lost");
-            setTimeout(() => {
-              triggerSettlement("death", floor, coins, stats, 0);
-            }, 100);
-          }
-          return newHp;
-        });
+        finalFleeDamage = 1;
+        finalHp = Math.max(0, hp - finalFleeDamage);
+        setHp(finalHp);
         setBoard((prev: Room[]) =>
           prev.map((r: Room, i: number) =>
             i === battleRoomIdx ? { ...r, revealed: false, defeated: false } : r
@@ -803,15 +810,31 @@ export default function App() {
             id: ++recordIdCounter,
             turn,
             floor,
-            event: `🏃 逃跑成功！但受到 ${fleeDamage} 点伤害，房间恢复危险状态`,
+            event: `🏃 逃跑成功！但受到 ${finalFleeDamage} 点伤害，房间恢复危险状态`,
             roomType: "monster",
-            hpDelta: -fleeDamage,
+            hpDelta: -finalFleeDamage,
             coinDelta: 0,
             items: [],
           },
           ...prev,
         ]);
+        if (finalHp <= 0) {
+          setStatus("lost");
+          setBattleLog((prev) => [
+            ...prev,
+            createBattleLog("💀 失血过多，倒下了...", "system"),
+          ]);
+          setTimeout(() => {
+            setBattleState("idle");
+            setCurrentMonster(null);
+            setBattleLog([]);
+            setBattleRoomIdx(-1);
+            triggerSettlement("death", floor, finalCoins, finalStats, 0);
+          }, settleDelay);
+          return;
+        }
       } else if (result === "lost") {
+        finalHp = 0;
         setStatus("lost");
         setHistory((prev: TurnRecord[]) => [
           {
@@ -827,11 +850,15 @@ export default function App() {
           ...prev,
         ]);
         setTimeout(() => {
-          triggerSettlement("death", floor, coins, stats, 0);
-        }, 100);
+          setBattleState("idle");
+          setCurrentMonster(null);
+          setBattleLog([]);
+          setBattleRoomIdx(-1);
+          triggerSettlement("death", floor, finalCoins, finalStats, finalHp);
+        }, settleDelay);
       }
     },
-    [battleRoomIdx, turn, floor, coins, stats, triggerSettlement]
+    [battleRoomIdx, turn, floor, coins, stats, hp, triggerSettlement]
   );
 
   const battleAttack = useCallback(() => {
@@ -847,18 +874,11 @@ export default function App() {
 
     if (newMonsterHp <= 0) {
       newLogs.push(createBattleLog(`${currentMonster.icon} ${currentMonster.name} 被击败了！`, "system"));
-      const gotPotion = Math.random() < currentMonster.potionDropChance;
-      newLogs.push(
-        createBattleLog(
-          `🎉 胜利！获得 ${currentMonster.coinReward} 金币${gotPotion ? "，掉落 1 瓶药水🧪" : ""}`,
-          "reward"
-        )
-      );
       setCurrentMonster(updatedMonster);
       setBattleLog((prev) => [...prev, ...newLogs]);
       setTimeout(() => {
         endBattle("won", updatedMonster);
-      }, 800);
+      }, 600);
       return;
     }
 
@@ -873,7 +893,7 @@ export default function App() {
       const newHp = Math.max(0, h - monsterDamage);
       if (newHp <= 0) {
         setTimeout(() => {
-          endBattle("lost", updatedMonster);
+          endBattle("lost", updatedMonster, 1500);
         }, 500);
       }
       return newHp;
@@ -927,7 +947,7 @@ export default function App() {
         const newHp = Math.max(0, h - damage);
         if (newHp <= 0) {
           setTimeout(() => {
-            endBattle("lost", currentMonster);
+            endBattle("lost", currentMonster, 1500);
           }, 500);
         }
         return newHp;
