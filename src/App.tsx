@@ -839,6 +839,7 @@ export default function App() {
         }
       } else if (result === "lost") {
         finalHp = 0;
+        setHp(0);
         setStatus("lost");
         setHistory((prev: TurnRecord[]) => [
           {
