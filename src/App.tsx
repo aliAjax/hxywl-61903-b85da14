@@ -65,6 +65,33 @@ function getNeighbors(idx: number): number[] {
   return out;
 }
 
+interface FloorConfig {
+  coinCt: number;
+  trapCt: number;
+  monsterCt: number;
+  potionCt: number;
+  coinMin: number;
+  coinMax: number;
+  pathMaxDamage: number;
+}
+
+function getFloorConfig(floor: number): FloorConfig {
+  const lv = Math.min(floor, 10);
+  const coinCt = Math.min(5 + Math.floor(lv * 0.7), 10);
+  const trapCt = Math.min(4 + Math.floor(lv * 0.6), 9);
+  const monsterCt = Math.min(3 + Math.floor(lv * 0.5), 7);
+  const potionCt = Math.max(2 - Math.floor((lv - 1) / 3), 1);
+  const coinMin = 1 + Math.floor((lv - 1) / 2);
+  const coinMax = 3 + Math.floor(lv / 2);
+  const pathMaxDamage = MAX_HP + Math.floor((lv - 1) / 2) * 2;
+  return { coinCt, trapCt, monsterCt, potionCt, coinMin, coinMax, pathMaxDamage };
+}
+
+export function getCoinReward(floor: number): number {
+  const cfg = getFloorConfig(floor);
+  return cfg.coinMin + Math.floor(Math.random() * (cfg.coinMax - cfg.coinMin + 1));
+}
+
 function minDamagePath(types: RoomType[], from: number, to: number): number {
   const dist = new Array<number>(TOTAL).fill(Infinity);
   dist[from] = 0;
@@ -90,7 +117,16 @@ function minDamagePath(types: RoomType[], from: number, to: number): number {
   return dist[to];
 }
 
-function generateBoard(): Room[] {
+function generateBoard(floor: number = 1): Room[] {
+  const cfg = getFloorConfig(floor);
+  const totalAllocated = 2 + cfg.coinCt + cfg.trapCt + cfg.monsterCt + cfg.potionCt;
+  const maxAllocatable = TOTAL - 1;
+  const overflow = Math.max(0, totalAllocated - maxAllocatable);
+  const adjCoin = Math.max(1, cfg.coinCt - Math.ceil(overflow / 2));
+  const adjTrap = Math.max(1, cfg.trapCt - Math.ceil(overflow / 3));
+  const adjMonster = Math.max(1, cfg.monsterCt - Math.floor(overflow / 3));
+  const adjPotion = cfg.potionCt;
+
   for (let attempt = 0; attempt < 200; attempt++) {
     const types: RoomType[] = new Array<RoomType>(TOTAL).fill("empty");
     types[0] = "start";
@@ -102,19 +138,15 @@ function generateBoard(): Room[] {
     types[keyIdx] = "key";
     types[exitIdx] = "exit";
     const rest = positions.slice(2);
-    const coinCt = 5;
-    const trapCt = 4;
-    const monsterCt = 3;
-    const potionCt = 2;
     for (let i = 0; i < rest.length; i++) {
-      if (i < coinCt) types[rest[i]] = "coin";
-      else if (i < coinCt + trapCt) types[rest[i]] = "trap";
-      else if (i < coinCt + trapCt + monsterCt) types[rest[i]] = "monster";
-      else if (i < coinCt + trapCt + monsterCt + potionCt) types[rest[i]] = "potion";
+      if (i < adjCoin) types[rest[i]] = "coin";
+      else if (i < adjCoin + adjTrap) types[rest[i]] = "trap";
+      else if (i < adjCoin + adjTrap + adjMonster) types[rest[i]] = "monster";
+      else if (i < adjCoin + adjTrap + adjMonster + adjPotion) types[rest[i]] = "potion";
     }
     const d1 = minDamagePath(types, 0, keyIdx);
     const d2 = minDamagePath(types, keyIdx, exitIdx);
-    if (d1 + d2 < MAX_HP) {
+    if (d1 + d2 <= cfg.pathMaxDamage) {
       return types.map((t) => ({ type: t, revealed: t === "start" }));
     }
   }
@@ -125,30 +157,36 @@ function generateBoard(): Room[] {
   const safeCorridor = new Set([0, 1, 2, 7, 12, 17, 22, 23, 24]);
   const allPositions = Array.from({ length: TOTAL }, (_, i) => i);
   const available = shuffle(allPositions.filter((i) => !safeCorridor.has(i)));
-  for (let i = 0; i < 3 && i < available.length; i++) fallback[available[i]] = "trap";
-  for (let i = 3; i < 5 && i < available.length; i++) fallback[available[i]] = "monster";
-  for (let i = 5; i < 10 && i < available.length; i++) fallback[available[i]] = "coin";
-  for (let i = 10; i < 12 && i < available.length; i++) fallback[available[i]] = "potion";
+  const fbTrap = Math.min(adjTrap, 3);
+  const fbMonster = Math.min(adjMonster, 3);
+  const fbCoin = Math.min(adjCoin, 6);
+  const fbPotion = adjPotion;
+  let idx = 0;
+  for (let i = 0; i < fbTrap && idx < available.length; i++, idx++) fallback[available[idx]] = "trap";
+  for (let i = 0; i < fbMonster && idx < available.length; i++, idx++) fallback[available[idx]] = "monster";
+  for (let i = 0; i < fbCoin && idx < available.length; i++, idx++) fallback[available[idx]] = "coin";
+  for (let i = 0; i < fbPotion && idx < available.length; i++, idx++) fallback[available[idx]] = "potion";
   return fallback.map((t) => ({ type: t, revealed: t === "start" }));
 }
 
 let recordIdCounter = 0;
 
 export default function App() {
-  const [board, setBoard] = useState<Room[]>(generateBoard);
+  const initialFloor = 1;
+  const [board, setBoard] = useState<Room[]>(() => generateBoard(initialFloor));
   const [hp, setHp] = useState(MAX_HP);
   const [coins, setCoins] = useState(0);
   const [keys, setKeys] = useState(0);
   const [potions, setPotions] = useState(0);
-  const [floor, setFloor] = useState(1);
+  const [floor, setFloor] = useState(initialFloor);
   const [status, setStatus] = useState<"playing" | "won" | "lost">("playing");
   const [turn, setTurn] = useState(0);
   const [history, setHistory] = useState<TurnRecord[]>([
     {
       id: ++recordIdCounter,
       turn: 0,
-      floor: 1,
-      event: "🏠 游戏开始！翻开相邻房间探索地牢",
+      floor: initialFloor,
+      event: `🏠 游戏开始！进入B${initialFloor}F，翻开相邻房间探索地牢`,
       hpDelta: 0,
       coinDelta: 0,
       items: [],
@@ -235,13 +273,13 @@ export default function App() {
           });
         }
       } else if (room.type === "coin") {
-        const gain = 1 + Math.floor(Math.random() * 3);
+        const gain = getCoinReward(floor);
         newCoins = coins + gain;
         records.push({
           id: ++recordIdCounter,
           turn: nextTurn,
           floor,
-          event: `💰 发现${gain}枚金币！`,
+          event: `💰 发现${gain}枚金币！（B${floor}F奖励加成）`,
           roomType: "coin",
           hpDelta: 0,
           coinDelta: gain,
@@ -337,20 +375,21 @@ export default function App() {
   );
 
   const resetGame = useCallback(() => {
-    setBoard(generateBoard());
+    const newFloor = 1;
+    setBoard(generateBoard(newFloor));
     setHp(MAX_HP);
     setCoins(0);
     setKeys(0);
     setPotions(0);
-    setFloor(1);
+    setFloor(newFloor);
     setStatus("playing");
     setTurn(0);
     setHistory([
       {
         id: ++recordIdCounter,
         turn: 0,
-        floor: 1,
-        event: "🏠 重新开始探索！",
+        floor: newFloor,
+        event: "🏠 重新开始探索！一切已重置，进入B1F",
         hpDelta: 0,
         coinDelta: 0,
         items: [],
@@ -359,8 +398,10 @@ export default function App() {
   }, []);
 
   const nextFloor = useCallback(() => {
-    setBoard(generateBoard());
-    setFloor((f: number) => f + 1);
+    const newFloor = floor + 1;
+    const nextCfg = getFloorConfig(newFloor);
+    setBoard(generateBoard(newFloor));
+    setFloor(newFloor);
     setKeys(0);
     setStatus("playing");
     setTurn(0);
@@ -368,8 +409,8 @@ export default function App() {
       {
         id: ++recordIdCounter,
         turn: 0,
-        floor: floor + 1,
-        event: "⬆️ 进入下一层！",
+        floor: newFloor,
+        event: `⬆️ 进入B${newFloor}F！陷阱+${nextCfg.trapCt}、怪物+${nextCfg.monsterCt}、金币奖励范围${nextCfg.coinMin}~${nextCfg.coinMax}，请谨慎探索`,
         hpDelta: 0,
         coinDelta: 0,
         items: [],
@@ -502,8 +543,9 @@ export default function App() {
         <aside className="side-panel">
           <h2>核心玩法</h2>
           <p>
-            在5×5地牢中逐步翻开相邻房间，可能遇到金币💰、陷阱⚡、怪物👹、药水🧪、钥匙🔑和出口🚪。
-            找到钥匙后前往出口即可通关，血量归零则失败。药水可以恢复血量。
+            在5×5地牢中逐步翻开相邻房间，寻找钥匙�后打开出口🚪即可进入下一层。
+            层数越高，陷阱⚡和怪物👹越多，但金币�奖励也更丰厚。
+            进入下一层会保留血量、金币和药水，失败或「重新探索」则完全重置。
           </p>
           <div className="legend">
             <span className="leg-start">🏠 起点</span>
@@ -514,6 +556,16 @@ export default function App() {
             <span className="leg-key">🔑 钥匙</span>
             <span className="leg-exit">🚪 出口</span>
             <span className="leg-empty">· 空房</span>
+          </div>
+          <div className="floor-info">
+            <small>B{floor}F 难度配置</small>
+            <div className="floor-config">
+              <span>陷阱 {getFloorConfig(floor).trapCt}</span>
+              <span>怪物 {getFloorConfig(floor).monsterCt}</span>
+              <span>金币房 {getFloorConfig(floor).coinCt}</span>
+              <span>药水 {getFloorConfig(floor).potionCt}</span>
+              <span>金币 {getFloorConfig(floor).coinMin}~{getFloorConfig(floor).coinMax}/堆</span>
+            </div>
           </div>
           <div className="actions">
             <button className="btn-reset" onClick={resetGame}>
@@ -601,10 +653,10 @@ export default function App() {
         <h2>结算预览</h2>
         <p>
           {status === "won"
-            ? `🎉 恭喜通关第${floor}层！获得${coins}金币，剩余${potions}瓶药水。点击「进入下一层」继续冒险！`
+            ? `🎉 恭喜通关B${floor}F！累计获得${coins}💰金币，当前血量${hp}/${MAX_HP}❤️，剩余${potions}瓶🧪药水。点击「进入下一层」继续向B${floor + 1}F深入，届时将有更多陷阱和怪物，但金币奖励也会更丰厚！`
             : status === "lost"
-              ? "💀 探索失败，血量归零。点击「重新探索」再来一局！"
-              : `正在探索第${floor}层，血量${hp}，金币${coins}，药水${potions}瓶，${keys > 0 ? "已持有钥匙🔑" : "尚未找到钥匙"}。继续翻开相邻房间前进！`}
+              ? `💀 探索失败，在B${floor}F血量归零。共获得${coins}💰金币，到达B${floor}F。点击「重新探索」从B1F再次挑战！`
+              : `正在探索B${floor}F，血量${hp}/${MAX_HP}❤️，金币${coins}💰，药水${potions}🧪，${keys > 0 ? "已持有钥匙🔑，赶快找到出口🚪！" : "尚未找到钥匙🔑，继续翻开相邻房间小心前进！"}本层有${getFloorConfig(floor).trapCt}个陷阱⚡和${getFloorConfig(floor).monsterCt}只怪物👹，谨慎行动！`}
         </p>
       </section>
     </main>

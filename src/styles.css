@@ -291,6 +291,34 @@ button {
   padding: 3px 0;
 }
 
+.floor-info {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(124, 45, 18, 0.18);
+  border: 1px solid rgba(250, 204, 21, 0.18);
+}
+
+.floor-info small {
+  display: block;
+  color: #facc15;
+  font-weight: 700;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.floor-config {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.floor-config span {
+  padding: 2px 0;
+}
+
 .leg-start { color: #60a5fa; }
 .leg-coin { color: #facc15; }
 .leg-trap { color: #fb923c; }
