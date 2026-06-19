@@ -12,6 +12,17 @@ interface Room {
   revealed: boolean;
 }
 
+interface TurnRecord {
+  id: number;
+  turn: number;
+  floor: number;
+  event: string;
+  roomType?: RoomType;
+  hpDelta: number;
+  coinDelta: number;
+  items: string[];
+}
+
 const SYMBOLS: Record<RoomType, string> = {
   start: "🏠",
   coin: "💰",
@@ -121,6 +132,8 @@ function generateBoard(): Room[] {
   return fallback.map((t) => ({ type: t, revealed: t === "start" }));
 }
 
+let recordIdCounter = 0;
+
 export default function App() {
   const [board, setBoard] = useState<Room[]>(generateBoard);
   const [hp, setHp] = useState(MAX_HP);
@@ -129,7 +142,18 @@ export default function App() {
   const [potions, setPotions] = useState(0);
   const [floor, setFloor] = useState(1);
   const [status, setStatus] = useState<"playing" | "won" | "lost">("playing");
-  const [log, setLog] = useState<string[]>(["🏠 游戏开始！翻开相邻房间探索地牢"]);
+  const [turn, setTurn] = useState(0);
+  const [history, setHistory] = useState<TurnRecord[]>([
+    {
+      id: ++recordIdCounter,
+      turn: 0,
+      floor: 1,
+      event: "🏠 游戏开始！翻开相邻房间探索地牢",
+      hpDelta: 0,
+      coinDelta: 0,
+      items: [],
+    },
+  ]);
 
   const flippable = useMemo(() => {
     const set = new Set<number>();
@@ -155,13 +179,28 @@ export default function App() {
       if (room.revealed) {
         if (room.type === "exit" && keys > 0) {
           setStatus("won");
-          setLog((prev: string[]) => ["🚪 用钥匙打开出口，通关！", ...prev].slice(0, 20));
+          const nextTurn = turn + 1;
+          setTurn(nextTurn);
+          setHistory((prev: TurnRecord[]) => [
+            {
+              id: ++recordIdCounter,
+              turn: nextTurn,
+              floor,
+              event: "🚪 用钥匙打开出口，通关！",
+              roomType: "exit",
+              hpDelta: 0,
+              coinDelta: 0,
+              items: [],
+            },
+            ...prev,
+          ]);
         }
         return;
       }
       if (!flippable.has(idx)) return;
 
-      const messages: string[] = [];
+      const records: TurnRecord[] = [];
+      const nextTurn = turn + 1;
       let newHp = hp;
       let newCoins = coins;
       let newKeys = keys;
@@ -172,34 +211,115 @@ export default function App() {
       if (dmg > 0) {
         newHp = Math.max(0, hp - dmg);
         const label = room.type === "trap" ? "⚡ 踩到陷阱" : "👹 遭遇怪物";
-        messages.push(`${label}，受到${dmg}点伤害！`);
+        records.push({
+          id: ++recordIdCounter,
+          turn: nextTurn,
+          floor,
+          event: `${label}，受到${dmg}点伤害！`,
+          roomType: room.type,
+          hpDelta: -dmg,
+          coinDelta: 0,
+          items: [],
+        });
         if (newHp <= 0) {
           newStatus = "lost";
-          messages.push("💀 血量归零，探索失败...");
+          records.push({
+            id: ++recordIdCounter,
+            turn: nextTurn,
+            floor,
+            event: "💀 血量归零，探索失败...",
+            roomType: room.type,
+            hpDelta: 0,
+            coinDelta: 0,
+            items: [],
+          });
         }
       } else if (room.type === "coin") {
         const gain = 1 + Math.floor(Math.random() * 3);
         newCoins = coins + gain;
-        messages.push(`💰 发现${gain}枚金币！`);
+        records.push({
+          id: ++recordIdCounter,
+          turn: nextTurn,
+          floor,
+          event: `💰 发现${gain}枚金币！`,
+          roomType: "coin",
+          hpDelta: 0,
+          coinDelta: gain,
+          items: [],
+        });
       } else if (room.type === "key") {
         newKeys = keys + 1;
-        messages.push("🔑 找到钥匙！");
+        records.push({
+          id: ++recordIdCounter,
+          turn: nextTurn,
+          floor,
+          event: "🔑 找到钥匙！",
+          roomType: "key",
+          hpDelta: 0,
+          coinDelta: 0,
+          items: ["🔑 钥匙"],
+        });
         if (exitRevealed) {
           newStatus = "won";
-          messages.push("🚪 用钥匙打开出口，通关！");
+          records.push({
+            id: ++recordIdCounter,
+            turn: nextTurn,
+            floor,
+            event: "🚪 用钥匙打开出口，通关！",
+            roomType: "exit",
+            hpDelta: 0,
+            coinDelta: 0,
+            items: [],
+          });
         }
       } else if (room.type === "potion") {
         newPotions = potions + 1;
-        messages.push("🧪 发现一瓶药水！已放入背包");
+        records.push({
+          id: ++recordIdCounter,
+          turn: nextTurn,
+          floor,
+          event: "🧪 发现一瓶药水！已放入背包",
+          roomType: "potion",
+          hpDelta: 0,
+          coinDelta: 0,
+          items: ["🧪 药水"],
+        });
       } else if (room.type === "exit") {
         if (keys > 0) {
           newStatus = "won";
-          messages.push("🚪 用钥匙打开出口，通关！");
+          records.push({
+            id: ++recordIdCounter,
+            turn: nextTurn,
+            floor,
+            event: "🚪 用钥匙打开出口，通关！",
+            roomType: "exit",
+            hpDelta: 0,
+            coinDelta: 0,
+            items: [],
+          });
         } else {
-          messages.push("🚪 发现出口，但没有钥匙，无法打开");
+          records.push({
+            id: ++recordIdCounter,
+            turn: nextTurn,
+            floor,
+            event: "🚪 发现出口，但没有钥匙，无法打开",
+            roomType: "exit",
+            hpDelta: 0,
+            coinDelta: 0,
+            items: [],
+          });
         }
       } else if (room.type === "empty") {
-        messages.push("· 空房间，什么也没有");
+        records.push({
+          id: ++recordIdCounter,
+          turn: nextTurn,
+          floor,
+          event: "· 空房间，什么也没有",
+          roomType: "empty",
+          hpDelta: 0,
+          coinDelta: 0,
+          items: [],
+        });
       }
 
       setBoard((prev: Room[]) =>
@@ -210,9 +330,10 @@ export default function App() {
       setKeys(newKeys);
       setPotions(newPotions);
       setStatus(newStatus);
-      setLog((prev: string[]) => [...messages, ...prev].slice(0, 20));
+      setTurn(nextTurn);
+      setHistory((prev: TurnRecord[]) => [...records, ...prev]);
     },
-    [board, hp, coins, keys, potions, status, flippable, exitRevealed]
+    [board, hp, coins, keys, potions, status, flippable, exitRevealed, turn, floor]
   );
 
   const resetGame = useCallback(() => {
@@ -223,7 +344,18 @@ export default function App() {
     setPotions(0);
     setFloor(1);
     setStatus("playing");
-    setLog(["🏠 重新开始探索！"]);
+    setTurn(0);
+    setHistory([
+      {
+        id: ++recordIdCounter,
+        turn: 0,
+        floor: 1,
+        event: "🏠 重新开始探索！",
+        hpDelta: 0,
+        coinDelta: 0,
+        items: [],
+      },
+    ]);
   }, []);
 
   const nextFloor = useCallback(() => {
@@ -231,26 +363,82 @@ export default function App() {
     setFloor((f: number) => f + 1);
     setKeys(0);
     setStatus("playing");
-    setLog((prev: string[]) => ["⬆️ 进入下一层！", ...prev].slice(0, 20));
-  }, []);
+    setTurn(0);
+    setHistory((prev: TurnRecord[]) => [
+      {
+        id: ++recordIdCounter,
+        turn: 0,
+        floor: floor + 1,
+        event: "⬆️ 进入下一层！",
+        hpDelta: 0,
+        coinDelta: 0,
+        items: [],
+      },
+      ...prev,
+    ]);
+  }, [floor]);
 
   const usePotion = useCallback(() => {
     if (status !== "playing") {
-      setLog((prev: string[]) => ["❌ 游戏未进行中，无法使用药水", ...prev].slice(0, 20));
+      setHistory((prev: TurnRecord[]) => [
+        {
+          id: ++recordIdCounter,
+          turn,
+          floor,
+          event: "❌ 游戏未进行中，无法使用药水",
+          hpDelta: 0,
+          coinDelta: 0,
+          items: [],
+        },
+        ...prev,
+      ]);
       return;
     }
     if (potions <= 0) {
-      setLog((prev: string[]) => ["❌ 背包中没有药水，无法使用", ...prev].slice(0, 20));
+      setHistory((prev: TurnRecord[]) => [
+        {
+          id: ++recordIdCounter,
+          turn,
+          floor,
+          event: "❌ 背包中没有药水，无法使用",
+          hpDelta: 0,
+          coinDelta: 0,
+          items: [],
+        },
+        ...prev,
+      ]);
       return;
     }
     if (hp >= MAX_HP) {
-      setLog((prev: string[]) => ["❌ 血量已满，无需使用药水", ...prev].slice(0, 20));
+      setHistory((prev: TurnRecord[]) => [
+        {
+          id: ++recordIdCounter,
+          turn,
+          floor,
+          event: "❌ 血量已满，无需使用药水",
+          hpDelta: 0,
+          coinDelta: 0,
+          items: [],
+        },
+        ...prev,
+      ]);
       return;
     }
     setPotions((p: number) => p - 1);
     setHp((h: number) => Math.min(MAX_HP, h + 2));
-    setLog((prev: string[]) => ["🧪 使用药水，恢复2点血量", ...prev].slice(0, 20));
-  }, [potions, hp, status]);
+    setHistory((prev: TurnRecord[]) => [
+      {
+        id: ++recordIdCounter,
+        turn,
+        floor,
+        event: "🧪 使用药水，恢复2点血量",
+        hpDelta: 2,
+        coinDelta: 0,
+        items: [],
+      },
+      ...prev,
+    ]);
+  }, [potions, hp, status, turn, floor]);
 
   return (
     <main className="game-shell">
@@ -350,14 +538,63 @@ export default function App() {
               进入下一层
             </button>
           </div>
-          <div className="log">
-            {log.map((msg: string, i: number) => (
-              <p key={i} className={i === 0 ? "log-latest" : ""}>
-                {msg}
-              </p>
+          <div className="history-list history-compact">
+            {history.slice(0, 6).map((rec: TurnRecord, i: number) => (
+              <div key={rec.id} className={`history-item ${i === 0 ? "history-latest" : ""}`}>
+                <div className="history-main">
+                  <span className="history-turn">B{rec.floor}F·#{rec.turn}</span>
+                  <span className="history-event">{rec.event}</span>
+                </div>
+                <div className="history-deltas">
+                  {rec.hpDelta !== 0 && (
+                    <span className={rec.hpDelta > 0 ? "delta-hp-gain" : "delta-hp-loss"}>
+                      {rec.hpDelta > 0 ? `+${rec.hpDelta}❤️` : `${rec.hpDelta}❤️`}
+                    </span>
+                  )}
+                  {rec.coinDelta !== 0 && (
+                    <span className="delta-coin">+{rec.coinDelta}💰</span>
+                  )}
+                  {rec.items.map((item, idx) => (
+                    <span key={idx} className="delta-item">{item}</span>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </aside>
+      </section>
+
+      <section className="history-panel">
+        <div className="history-header">
+          <h2>📜 回合记录</h2>
+          <span className="history-count">共 {history.length} 条</span>
+        </div>
+        <div className="history-list history-full">
+          {history.map((rec: TurnRecord, i: number) => (
+            <div key={rec.id} className={`history-item ${i === 0 ? "history-latest" : ""}`}>
+              <div className="history-main">
+                <span className="history-turn">B{rec.floor}F · 回合 {rec.turn}</span>
+                <span className="history-event">{rec.event}</span>
+              </div>
+              <div className="history-deltas">
+                {rec.hpDelta !== 0 && (
+                  <span className={rec.hpDelta > 0 ? "delta-hp-gain" : "delta-hp-loss"}>
+                    {rec.hpDelta > 0 ? `+${rec.hpDelta}❤️` : `${rec.hpDelta}❤️`}
+                  </span>
+                )}
+                {rec.coinDelta !== 0 && (
+                  <span className="delta-coin">+{rec.coinDelta}💰</span>
+                )}
+                {rec.items.map((item, idx) => (
+                  <span key={idx} className="delta-item">{item}</span>
+                ))}
+                {rec.hpDelta === 0 && rec.coinDelta === 0 && rec.items.length === 0 && (
+                  <span className="delta-none">—</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="result-panel">
