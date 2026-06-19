@@ -1,92 +1,324 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import "./styles.css";
 
-const game = {
-  "id": "hxywl-61903",
-  "port": 61903,
-  "title": "地牢翻牌",
-  "tagline": "在随机房间里寻找钥匙与出口，避开陷阱",
-  "prompt": "我需要一个H5地牢翻牌小游戏，玩家在5x5格子里逐步翻开房间，可能遇到金币、陷阱、怪物、钥匙和出口。游戏需要有血量、背包、当前层数、回合记录和失败/通关结算。每一局地图随机生成，但要保证至少有一条可通关路线，整体操作适合手机单手点击。",
-  "palette": [
-    "#7c2d12",
-    "#65a30d",
-    "#dc2626"
-  ],
-  "stats": [
-    "血量",
-    "金币",
-    "钥匙",
-    "层数"
-  ],
-  "actions": [
-    "进入下一层",
-    "使用药水",
-    "重新探索"
-  ],
-  "mode": "dungeon"
+const SIZE = 5;
+const TOTAL = SIZE * SIZE;
+const MAX_HP = 5;
+
+type RoomType = "start" | "coin" | "trap" | "monster" | "key" | "exit" | "empty";
+
+interface Room {
+  type: RoomType;
+  revealed: boolean;
+}
+
+const SYMBOLS: Record<RoomType, string> = {
+  start: "🏠",
+  coin: "💰",
+  trap: "⚡",
+  monster: "👹",
+  key: "🔑",
+  exit: "🚪",
+  empty: "·",
 };
 
-const boards: Record<string, string[]> = {
-  rhythm: ["♪", "◇", "♪", "◆", "♪", "◇", "◆", "♪", "◇"],
-  merge: ["🍩", "🍩", "🧁", "🍪", "🧁", "🍰", "🍪", "🍩", "🍮"],
-  dungeon: ["?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?", "?"],
-  slingshot: ["★", "·", "●", "·", "▣", "·", "★", "·", "◎"],
-  escape: ["书架", "花瓶", "抽屉", "挂画", "地毯", "台灯", "门锁", "箱子", "窗帘"],
+const DAMAGE_MAP: Record<RoomType, number> = {
+  start: 0,
+  coin: 0,
+  trap: 1,
+  monster: 2,
+  key: 0,
+  exit: 0,
+  empty: 0,
 };
 
-function App() {
-  const [score, setScore] = useState(1280);
-  const [combo, setCombo] = useState(7);
-  const [selected, setSelected] = useState(0);
-  const cells = useMemo(() => boards[game.mode], []);
-  const best = Number(localStorage.getItem(game.id + "-best") || 0);
+function shuffle<T>(arr: T[]): T[] {
+  const result = [...arr];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
 
-  function playCell(index: number) {
-    setSelected(index);
-    const gain = game.mode === "dungeon" && index % 5 === 0 ? -80 : 120 + index * 8;
-    const nextScore = Math.max(0, score + gain);
-    setScore(nextScore);
-    setCombo((value) => (gain > 0 ? value + 1 : 0));
-    if (nextScore > best) {
-      localStorage.setItem(game.id + "-best", String(nextScore));
+function getNeighbors(idx: number): number[] {
+  const r = Math.floor(idx / SIZE);
+  const c = idx % SIZE;
+  const out: number[] = [];
+  if (r > 0) out.push(idx - SIZE);
+  if (r < SIZE - 1) out.push(idx + SIZE);
+  if (c > 0) out.push(idx - 1);
+  if (c < SIZE - 1) out.push(idx + 1);
+  return out;
+}
+
+function minDamagePath(types: RoomType[], from: number, to: number): number {
+  const dist = new Array<number>(TOTAL).fill(Infinity);
+  dist[from] = 0;
+  const visited = new Set<number>();
+  for (let iter = 0; iter < TOTAL; iter++) {
+    let u = -1;
+    let best = Infinity;
+    for (let i = 0; i < TOTAL; i++) {
+      if (!visited.has(i) && dist[i] < best) {
+        best = dist[i];
+        u = i;
+      }
+    }
+    if (u === -1 || u === to) break;
+    visited.add(u);
+    for (const v of getNeighbors(u)) {
+      if (!visited.has(v)) {
+        const alt = dist[u] + DAMAGE_MAP[types[v]];
+        if (alt < dist[v]) dist[v] = alt;
+      }
     }
   }
+  return dist[to];
+}
+
+function generateBoard(): Room[] {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const types: RoomType[] = new Array<RoomType>(TOTAL).fill("empty");
+    types[0] = "start";
+    const positions = shuffle(
+      Array.from({ length: TOTAL }, (_, i) => i).filter((i) => i !== 0)
+    );
+    const keyIdx = positions[0];
+    const exitIdx = positions[1];
+    types[keyIdx] = "key";
+    types[exitIdx] = "exit";
+    const rest = positions.slice(2);
+    const coinCt = 5;
+    const trapCt = 4;
+    const monsterCt = 3;
+    for (let i = 0; i < rest.length; i++) {
+      if (i < coinCt) types[rest[i]] = "coin";
+      else if (i < coinCt + trapCt) types[rest[i]] = "trap";
+      else if (i < coinCt + trapCt + monsterCt) types[rest[i]] = "monster";
+    }
+    const d1 = minDamagePath(types, 0, keyIdx);
+    const d2 = minDamagePath(types, keyIdx, exitIdx);
+    if (d1 + d2 < MAX_HP) {
+      return types.map((t) => ({ type: t, revealed: t === "start" }));
+    }
+  }
+  const fallback: RoomType[] = new Array<RoomType>(TOTAL).fill("empty");
+  fallback[0] = "start";
+  fallback[12] = "key";
+  fallback[24] = "exit";
+  for (let i = 0; i < 6; i++) fallback[4 + i * 4] = "coin";
+  return fallback.map((t) => ({ type: t, revealed: t === "start" }));
+}
+
+export default function App() {
+  const [board, setBoard] = useState<Room[]>(generateBoard);
+  const [hp, setHp] = useState(MAX_HP);
+  const [coins, setCoins] = useState(0);
+  const [keys, setKeys] = useState(0);
+  const [floor, setFloor] = useState(1);
+  const [status, setStatus] = useState<"playing" | "won" | "lost">("playing");
+  const [log, setLog] = useState<string[]>(["🏠 游戏开始！翻开相邻房间探索地牢"]);
+
+  const flippable = useMemo(() => {
+    const set = new Set<number>();
+    for (let i = 0; i < TOTAL; i++) {
+      if (board[i].revealed) {
+        for (const n of getNeighbors(i)) {
+          if (!board[n].revealed) set.add(n);
+        }
+      }
+    }
+    return set;
+  }, [board]);
+
+  const exitRevealed = useMemo(
+    () => board.some((r: Room) => r.type === "exit" && r.revealed),
+    [board]
+  );
+
+  const flip = useCallback(
+    (idx: number) => {
+      if (status !== "playing") return;
+      const room = board[idx];
+      if (room.revealed) {
+        if (room.type === "exit" && keys > 0) {
+          setStatus("won");
+          setLog((prev: string[]) => ["🚪 用钥匙打开出口，通关！", ...prev].slice(0, 20));
+        }
+        return;
+      }
+      if (!flippable.has(idx)) return;
+
+      const messages: string[] = [];
+      let newHp = hp;
+      let newCoins = coins;
+      let newKeys = keys;
+      let newStatus: "playing" | "won" | "lost" = "playing";
+
+      const dmg = DAMAGE_MAP[room.type as keyof typeof DAMAGE_MAP];
+      if (dmg > 0) {
+        newHp = Math.max(0, hp - dmg);
+        const label = room.type === "trap" ? "⚡ 踩到陷阱" : "👹 遭遇怪物";
+        messages.push(`${label}，受到${dmg}点伤害！`);
+        if (newHp <= 0) {
+          newStatus = "lost";
+          messages.push("💀 血量归零，探索失败...");
+        }
+      } else if (room.type === "coin") {
+        const gain = 1 + Math.floor(Math.random() * 3);
+        newCoins = coins + gain;
+        messages.push(`💰 发现${gain}枚金币！`);
+      } else if (room.type === "key") {
+        newKeys = keys + 1;
+        messages.push("🔑 找到钥匙！");
+        if (exitRevealed) {
+          newStatus = "won";
+          messages.push("🚪 用钥匙打开出口，通关！");
+        }
+      } else if (room.type === "exit") {
+        if (keys > 0) {
+          newStatus = "won";
+          messages.push("🚪 用钥匙打开出口，通关！");
+        } else {
+          messages.push("🚪 发现出口，但没有钥匙，无法打开");
+        }
+      } else if (room.type === "empty") {
+        messages.push("· 空房间，什么也没有");
+      }
+
+      setBoard((prev: Room[]) =>
+        prev.map((r: Room, i: number) => (i === idx ? { ...r, revealed: true } : r))
+      );
+      setHp(newHp);
+      setCoins(newCoins);
+      setKeys(newKeys);
+      setStatus(newStatus);
+      setLog((prev: string[]) => [...messages, ...prev].slice(0, 20));
+    },
+    [board, hp, coins, keys, status, flippable, exitRevealed]
+  );
+
+  const resetGame = useCallback(() => {
+    setBoard(generateBoard());
+    setHp(MAX_HP);
+    setCoins(0);
+    setKeys(0);
+    setFloor(1);
+    setStatus("playing");
+    setLog(["🏠 重新开始探索！"]);
+  }, []);
+
+  const nextFloor = useCallback(() => {
+    setBoard(generateBoard());
+    setFloor((f: number) => f + 1);
+    setKeys(0);
+    setStatus("playing");
+    setLog((prev: string[]) => ["⬆️ 进入下一层！", ...prev].slice(0, 20));
+  }, []);
+
+  const usePotion = useCallback(() => {
+    if (coins >= 5 && hp < MAX_HP && status === "playing") {
+      setCoins((c: number) => c - 5);
+      setHp((h: number) => Math.min(MAX_HP, h + 2));
+      setLog((prev: string[]) => ["💊 使用5金币恢复2点血量", ...prev].slice(0, 20));
+    }
+  }, [coins, hp, status]);
 
   return (
     <main className="game-shell">
       <section className="hero">
-        <p>{game.id} · H5Game · Port {game.port}</p>
-        <h1>{game.title}</h1>
-        <span>{game.tagline}</span>
+        <p>hxywl-61903 · H5Game · Port 61903</p>
+        <h1>地牢翻牌</h1>
+        <span>在随机房间里寻找钥匙与出口，避开陷阱</span>
       </section>
 
       <section className="hud">
-        {game.stats.map((stat, index) => (
-          <article key={stat}>
-            <small>{stat}</small>
-            <strong>{index === 0 ? score : index === 1 ? best : index === 2 ? selected + 1 : combo}</strong>
-          </article>
-        ))}
+        <article>
+          <small>血量</small>
+          <strong className="stat-hp">
+            {"❤️".repeat(hp)}{"🖤".repeat(MAX_HP - hp)}
+          </strong>
+        </article>
+        <article>
+          <small>金币</small>
+          <strong className="stat-coin">{coins}</strong>
+        </article>
+        <article>
+          <small>钥匙</small>
+          <strong className="stat-key">{keys > 0 ? "🔑" : "✕"}</strong>
+        </article>
+        <article>
+          <small>层数</small>
+          <strong className="stat-floor">B{floor}F</strong>
+        </article>
       </section>
 
-      <section className={"playground " + game.mode}>
+      <section className="playground dungeon">
         <div className="board">
-          {cells.map((cell, index) => (
-            <button
-              className={selected === index ? "active" : ""}
-              key={index}
-              onClick={() => playCell(index)}
-            >
-              {cell}
-            </button>
-          ))}
+          {board.map((room: Room, idx: number) => {
+            const isFlippable = flippable.has(idx) && !room.revealed;
+            const canClickExit =
+              room.revealed && room.type === "exit" && keys > 0 && status === "playing";
+            return (
+              <button
+                key={idx}
+                className={[
+                  "cell",
+                  room.type,
+                  room.revealed ? "revealed" : "",
+                  isFlippable ? "flippable" : "",
+                  canClickExit ? "can-exit" : "",
+                  status !== "playing" && !room.revealed ? "disabled" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onClick={() => flip(idx)}
+              >
+                {room.revealed ? SYMBOLS[room.type as keyof typeof SYMBOLS] : "?"}
+              </button>
+            );
+          })}
         </div>
         <aside className="side-panel">
           <h2>核心玩法</h2>
-          <p>{game.prompt}</p>
+          <p>
+            在5×5地牢中逐步翻开相邻房间，可能遇到金币💰、陷阱⚡、怪物👹、钥匙🔑和出口🚪。
+            找到钥匙后前往出口即可通关，血量归零则失败。
+          </p>
+          <div className="legend">
+            <span className="leg-start">🏠 起点</span>
+            <span className="leg-coin">💰 金币</span>
+            <span className="leg-trap">⚡ 陷阱</span>
+            <span className="leg-monster">👹 怪物</span>
+            <span className="leg-key">🔑 钥匙</span>
+            <span className="leg-exit">🚪 出口</span>
+            <span className="leg-empty">· 空房</span>
+          </div>
           <div className="actions">
-            {game.actions.map((action) => (
-              <button key={action}>{action}</button>
+            <button className="btn-reset" onClick={resetGame}>
+              重新探索
+            </button>
+            <button
+              className="btn-potion"
+              onClick={usePotion}
+              disabled={coins < 5 || hp >= MAX_HP || status !== "playing"}
+            >
+              使用药水 (5💰→2❤️)
+            </button>
+            <button
+              className="btn-next"
+              onClick={nextFloor}
+              disabled={status !== "won"}
+            >
+              进入下一层
+            </button>
+          </div>
+          <div className="log">
+            {log.map((msg: string, i: number) => (
+              <p key={i} className={i === 0 ? "log-latest" : ""}>
+                {msg}
+              </p>
             ))}
           </div>
         </aside>
@@ -94,10 +326,14 @@ function App() {
 
       <section className="result-panel">
         <h2>结算预览</h2>
-        <p>当前分数{score}，最高分{Math.max(best, score)}，连击{combo}。基础流程已包含开始、交互、反馈、记录和结算区域，后续可以继续扩展关卡、音效、动画与资源管理。</p>
+        <p>
+          {status === "won"
+            ? `🎉 恭喜通关第${floor}层！获得${coins}金币。点击「进入下一层」继续冒险！`
+            : status === "lost"
+              ? "💀 探索失败，血量归零。点击「重新探索」再来一局！"
+              : `正在探索第${floor}层，血量${hp}，金币${coins}，${keys > 0 ? "已持有钥匙🔑" : "尚未找到钥匙"}。继续翻开相邻房间前进！`}
+        </p>
       </section>
     </main>
   );
 }
-
-export default App;

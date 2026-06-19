@@ -28,7 +28,7 @@ button {
 }
 
 .hero {
-  min-height: 210px;
+  min-height: 180px;
   display: grid;
   align-content: center;
   gap: 12px;
@@ -82,6 +82,7 @@ button {
 
 .hud article {
   padding: 18px;
+  text-align: center;
 }
 
 .hud small {
@@ -91,7 +92,27 @@ button {
 }
 
 .hud strong {
-  font-size: 28px;
+  font-size: 24px;
+  display: block;
+  min-height: 32px;
+  line-height: 32px;
+}
+
+.stat-hp {
+  font-size: 18px !important;
+  letter-spacing: 2px;
+}
+
+.stat-coin {
+  color: #eab308;
+}
+
+.stat-key {
+  font-size: 28px !important;
+}
+
+.stat-floor {
+  color: #a78bfa;
 }
 
 .playground {
@@ -110,38 +131,122 @@ button {
   border: 1px solid rgba(148, 163, 184, 0.22);
 }
 
-.rhythm .board,
-.merge .board,
-.slingshot .board,
-.escape .board {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
 .dungeon .board {
   grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-rows: repeat(5, minmax(0, 1fr));
 }
 
-.board button {
+.cell {
   min-height: 72px;
   border: 1px solid rgba(226, 232, 240, 0.18);
   border-radius: 12px;
   color: #f8fafc;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--primary) 52%, #1e293b), #111827);
+  background: linear-gradient(145deg, #1e293d, #111827);
   font-size: clamp(20px, 5vw, 34px);
   font-weight: 800;
   cursor: pointer;
-  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+  transition: transform 160ms ease, border-color 200ms ease, background 250ms ease, box-shadow 250ms ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.board button:active,
-.board button.active {
-  transform: translateY(2px) scale(0.98);
-  border-color: var(--accent);
-  background: linear-gradient(145deg, var(--accent), var(--secondary));
+.cell:active {
+  transform: translateY(2px) scale(0.97);
 }
 
-.escape .board button {
-  font-size: clamp(15px, 3vw, 22px);
+.cell.revealed {
+  cursor: default;
+  transform: none;
+  border-color: transparent;
+}
+
+.cell.revealed.start {
+  background: linear-gradient(145deg, #1e3a5f, #172554);
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: inset 0 0 16px rgba(59, 130, 246, 0.15);
+}
+
+.cell.revealed.coin {
+  background: linear-gradient(145deg, #713f12, #422006);
+  border-color: rgba(234, 179, 8, 0.35);
+  box-shadow: inset 0 0 16px rgba(234, 179, 8, 0.12);
+}
+
+.cell.revealed.trap {
+  background: linear-gradient(145deg, #7c2d12, #431407);
+  border-color: rgba(249, 115, 22, 0.4);
+  box-shadow: inset 0 0 16px rgba(249, 115, 22, 0.15);
+}
+
+.cell.revealed.monster {
+  background: linear-gradient(145deg, #7f1d1d, #450a0a);
+  border-color: rgba(220, 38, 38, 0.45);
+  box-shadow: inset 0 0 16px rgba(220, 38, 38, 0.18);
+}
+
+.cell.revealed.key {
+  background: linear-gradient(145deg, #365314, #1a2e05);
+  border-color: rgba(34, 197, 94, 0.5);
+  box-shadow: inset 0 0 16px rgba(34, 197, 94, 0.18);
+}
+
+.cell.revealed.exit {
+  background: linear-gradient(145deg, #064e3b, #022c22);
+  border-color: rgba(16, 185, 129, 0.5);
+  box-shadow: inset 0 0 16px rgba(16, 185, 129, 0.18);
+}
+
+.cell.revealed.empty {
+  background: linear-gradient(145deg, #334155, #1e293b);
+  border-color: rgba(148, 163, 184, 0.15);
+}
+
+.cell.flippable {
+  border-color: rgba(250, 204, 21, 0.4);
+  animation: pulse-border 2s ease-in-out infinite;
+  cursor: pointer;
+}
+
+.cell.flippable:hover {
+  transform: scale(1.06);
+  border-color: rgba(250, 204, 21, 0.85);
+  background: linear-gradient(145deg, #2d3a4f, #1a2332);
+  box-shadow: 0 0 18px rgba(250, 204, 21, 0.15);
+}
+
+.cell.can-exit {
+  cursor: pointer;
+  animation: glow-exit 1.5s ease-in-out infinite;
+}
+
+.cell.can-exit:hover {
+  transform: scale(1.06);
+}
+
+.cell.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+@keyframes pulse-border {
+  0%, 100% {
+    border-color: rgba(250, 204, 21, 0.25);
+    box-shadow: 0 0 0 rgba(250, 204, 21, 0);
+  }
+  50% {
+    border-color: rgba(250, 204, 21, 0.6);
+    box-shadow: 0 0 14px rgba(250, 204, 21, 0.1);
+  }
+}
+
+@keyframes glow-exit {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.3), inset 0 0 12px rgba(16, 185, 129, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 22px rgba(16, 185, 129, 0.5), inset 0 0 18px rgba(16, 185, 129, 0.2);
+  }
 }
 
 .side-panel,
@@ -159,7 +264,28 @@ button {
   color: #cbd5e1;
   line-height: 1.7;
   margin: 0;
+  font-size: 14px;
 }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 14px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.legend span {
+  padding: 3px 0;
+}
+
+.leg-start { color: #60a5fa; }
+.leg-coin { color: #facc15; }
+.leg-trap { color: #fb923c; }
+.leg-monster { color: #f87171; }
+.leg-key { color: #4ade80; }
+.leg-exit { color: #34d399; }
 
 .actions {
   display: grid;
@@ -172,8 +298,53 @@ button {
   border: 0;
   border-radius: 10px;
   color: #0f172a;
-  background: #f8fafc;
   font-weight: 800;
+  font-size: 14px;
+  cursor: pointer;
+  transition: opacity 150ms, transform 120ms;
+}
+
+.actions button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.actions button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.btn-reset {
+  background: #f8fafc;
+}
+
+.btn-potion {
+  background: #a78bfa;
+}
+
+.btn-next {
+  background: linear-gradient(135deg, #34d399, #059669);
+}
+
+.log {
+  margin-top: 16px;
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.3) transparent;
+}
+
+.log p {
+  font-size: 13px;
+  color: #64748b;
+  margin: 4px 0;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  line-height: 1.5;
+}
+
+.log .log-latest {
+  color: #f1f5f9;
+  font-weight: 600;
 }
 
 .result-panel {
@@ -187,11 +358,41 @@ button {
   }
 
   .hero {
-    min-height: 180px;
+    min-height: 150px;
     padding: 24px;
   }
 
+  .hud article {
+    padding: 14px;
+  }
+
+  .hud strong {
+    font-size: 20px;
+  }
+
+  .stat-hp {
+    font-size: 15px !important;
+  }
+
   .board {
-    min-height: 390px;
+    min-height: 0;
+    aspect-ratio: 1;
+    gap: 7px;
+    padding: 12px;
+  }
+
+  .cell {
+    min-height: 0;
+    font-size: clamp(18px, 7vw, 28px);
+    border-radius: 8px;
+  }
+
+  .legend {
+    font-size: 12px;
+  }
+
+  .actions button {
+    min-height: 40px;
+    font-size: 13px;
   }
 }
