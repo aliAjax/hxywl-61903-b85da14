@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import "./styles.css";
 
 const SIZE = 5;
@@ -22,6 +22,21 @@ interface TurnRecord {
   coinDelta: number;
   items: string[];
 }
+
+type GameResultType = "clear" | "death" | "restart";
+
+interface GameStats {
+  revealedRooms: number;
+  trapHits: number;
+  monstersDefeated: number;
+}
+
+interface HighScore {
+  maxFloor: number;
+  maxCoins: number;
+}
+
+const HIGH_SCORE_KEY = "dungeon-high-score";
 
 const SYMBOLS: Record<RoomType, string> = {
   start: "🏠",
@@ -171,6 +186,110 @@ function generateBoard(floor: number = 1): Room[] {
 
 let recordIdCounter = 0;
 
+function loadHighScore(): HighScore {
+  try {
+    const raw = localStorage.getItem(HIGH_SCORE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        maxFloor: typeof parsed.maxFloor === "number" ? parsed.maxFloor : 1,
+        maxCoins: typeof parsed.maxCoins === "number" ? parsed.maxCoins : 0,
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { maxFloor: 1, maxCoins: 0 };
+}
+
+function saveHighScore(score: HighScore): void {
+  try {
+    localStorage.setItem(HIGH_SCORE_KEY, JSON.stringify(score));
+  } catch {
+    /* ignore */
+  }
+}
+
+function evaluateGame(
+  resultType: GameResultType,
+  finalFloor: number,
+  finalCoins: number,
+  stats: GameStats,
+  finalHp: number
+): { rank: string; comment: string; stars: number } {
+  const score =
+    finalFloor * 100 +
+    finalCoins * 2 +
+    stats.revealedRooms * 1 +
+    stats.monstersDefeated * 5 -
+    stats.trapHits * 3 +
+    finalHp * 10;
+
+  let stars: number;
+  let rank: string;
+  let comment: string;
+
+  if (resultType === "clear") {
+    if (score >= 500) {
+      stars = 5;
+      rank = "传奇冒险家";
+      comment = "完美的探索！你就是地牢之王！";
+    } else if (score >= 350) {
+      stars = 4;
+      rank = "精英探险家";
+      comment = "表现出色，地牢因你而颤抖！";
+    } else if (score >= 200) {
+      stars = 3;
+      rank = "勇敢冒险者";
+      comment = "干得不错，继续向更深层进发！";
+    } else {
+      stars = 2;
+      rank = "新手探险家";
+      comment = "顺利通关，下次尝试更高效的路线！";
+    }
+  } else if (resultType === "death") {
+    if (score >= 400) {
+      stars = 4;
+      rank = "不屈战士";
+      comment = "虽败犹荣！你的战绩令人敬佩！";
+    } else if (score >= 250) {
+      stars = 3;
+      rank = "坚强斗士";
+      comment = "战斗到了最后一刻，值得尊敬！";
+    } else if (score >= 100) {
+      stars = 2;
+      rank = "冒险者";
+      comment = "不要气馁，多积累经验再来挑战！";
+    } else {
+      stars = 1;
+      rank = "探险学徒";
+      comment = "下次小心陷阱和怪物，加油！";
+    }
+  } else {
+    if (score >= 300) {
+      stars = 3;
+      rank = "策略家";
+      comment = "主动撤退也是一种智慧，整装待发！";
+    } else if (score >= 150) {
+      stars = 2;
+      rank = "谨慎探险者";
+      comment = "见好就收，不失为明智之举！";
+    } else {
+      stars = 1;
+      rank = "探索新手";
+      comment = "下次尝试探索更多房间吧！";
+    }
+  }
+
+  return { rank, comment, stars };
+}
+
+const INITIAL_STATS: GameStats = {
+  revealedRooms: 1,
+  trapHits: 0,
+  monstersDefeated: 0,
+};
+
 export default function App() {
   const initialFloor = 1;
   const [board, setBoard] = useState<Room[]>(() => generateBoard(initialFloor));
@@ -181,6 +300,12 @@ export default function App() {
   const [floor, setFloor] = useState(initialFloor);
   const [status, setStatus] = useState<"playing" | "won" | "lost">("playing");
   const [turn, setTurn] = useState(0);
+  const [stats, setStats] = useState<GameStats>(INITIAL_STATS);
+  const [showSettlement, setShowSettlement] = useState(false);
+  const [settlementResult, setSettlementResult] = useState<GameResultType | null>(null);
+  const [highScore, setHighScore] = useState<HighScore>(() => loadHighScore());
+  const [brokeFloorRecord, setBrokeFloorRecord] = useState(false);
+  const [brokeCoinRecord, setBrokeCoinRecord] = useState(false);
   const [history, setHistory] = useState<TurnRecord[]>([
     {
       id: ++recordIdCounter,
@@ -208,6 +333,32 @@ export default function App() {
   const exitRevealed = useMemo(
     () => board.some((r: Room) => r.type === "exit" && r.revealed),
     [board]
+  );
+
+  const triggerSettlement = useCallback(
+    (resultType: GameResultType, currentFloor: number, currentCoins: number, currentStats: GameStats, currentHp: number) => {
+      const isFloorRecord = currentFloor > highScore.maxFloor;
+      const isCoinRecord = currentCoins > highScore.maxCoins;
+      setBrokeFloorRecord(isFloorRecord);
+      setBrokeCoinRecord(isCoinRecord);
+      const newHighScore: HighScore = { ...highScore };
+      let updated = false;
+      if (isFloorRecord) {
+        newHighScore.maxFloor = currentFloor;
+        updated = true;
+      }
+      if (isCoinRecord) {
+        newHighScore.maxCoins = currentCoins;
+        updated = true;
+      }
+      if (updated) {
+        setHighScore(newHighScore);
+        saveHighScore(newHighScore);
+      }
+      setSettlementResult(resultType);
+      setShowSettlement(true);
+    },
+    [highScore]
   );
 
   const flip = useCallback(
@@ -244,10 +395,16 @@ export default function App() {
       let newKeys = keys;
       let newPotions = potions;
       let newStatus: "playing" | "won" | "lost" = "playing";
+      const newStats: GameStats = { ...stats, revealedRooms: stats.revealedRooms + 1 };
 
       const dmg = DAMAGE_MAP[room.type as keyof typeof DAMAGE_MAP];
       if (dmg > 0) {
         newHp = Math.max(0, hp - dmg);
+        if (room.type === "trap") {
+          newStats.trapHits = stats.trapHits + 1;
+        } else if (room.type === "monster") {
+          newStats.monstersDefeated = stats.monstersDefeated + 1;
+        }
         const label = room.type === "trap" ? "⚡ 踩到陷阱" : "👹 遭遇怪物";
         records.push({
           id: ++recordIdCounter,
@@ -271,6 +428,9 @@ export default function App() {
             coinDelta: 0,
             items: [],
           });
+          setTimeout(() => {
+            triggerSettlement("death", floor, newCoins, newStats, newHp);
+          }, 100);
         }
       } else if (room.type === "coin") {
         const gain = getCoinReward(floor);
@@ -369,12 +529,23 @@ export default function App() {
       setPotions(newPotions);
       setStatus(newStatus);
       setTurn(nextTurn);
+      setStats(newStats);
       setHistory((prev: TurnRecord[]) => [...records, ...prev]);
     },
-    [board, hp, coins, keys, potions, status, flippable, exitRevealed, turn, floor]
+    [board, hp, coins, keys, potions, status, flippable, exitRevealed, turn, floor, stats, triggerSettlement]
   );
 
-  const resetGame = useCallback(() => {
+  const handleRestart = useCallback(() => {
+    let resultType: GameResultType;
+    if (status === "won") {
+      resultType = "clear";
+    } else {
+      resultType = "restart";
+    }
+    triggerSettlement(resultType, floor, coins, stats, hp);
+  }, [status, floor, coins, stats, hp, triggerSettlement]);
+
+  const doResetGame = useCallback(() => {
     const newFloor = 1;
     setBoard(generateBoard(newFloor));
     setHp(MAX_HP);
@@ -384,6 +555,11 @@ export default function App() {
     setFloor(newFloor);
     setStatus("playing");
     setTurn(0);
+    setStats(INITIAL_STATS);
+    setShowSettlement(false);
+    setSettlementResult(null);
+    setBrokeFloorRecord(false);
+    setBrokeCoinRecord(false);
     setHistory([
       {
         id: ++recordIdCounter,
@@ -481,6 +657,23 @@ export default function App() {
     ]);
   }, [potions, hp, status, turn, floor]);
 
+  const settlementData = useMemo(() => {
+    if (!showSettlement || !settlementResult) return null;
+    const evaluation = evaluateGame(settlementResult, floor, coins, stats, hp);
+    const resultTitle =
+      settlementResult === "clear"
+        ? "🏆 完美通关"
+        : settlementResult === "death"
+          ? "💀 探索失败"
+          : "🏃 主动结束";
+    return {
+      evaluation,
+      resultTitle,
+      isFloorRecord: brokeFloorRecord,
+      isCoinRecord: brokeCoinRecord,
+    };
+  }, [showSettlement, settlementResult, floor, coins, stats, hp, brokeFloorRecord, brokeCoinRecord]);
+
   return (
     <main className="game-shell">
       <section className="hero">
@@ -568,7 +761,7 @@ export default function App() {
             </div>
           </div>
           <div className="actions">
-            <button className="btn-reset" onClick={resetGame}>
+            <button className="btn-reset" onClick={handleRestart}>
               重新探索
             </button>
             <button
@@ -650,7 +843,13 @@ export default function App() {
       </section>
 
       <section className="result-panel">
-        <h2>结算预览</h2>
+        <div className="result-header">
+          <h2>🎯 本局进度</h2>
+          <div className="high-score-tags">
+            <span className="hs-tag">🏆 历史最高 B{highScore.maxFloor}F</span>
+            <span className="hs-tag">💰 历史最多 {highScore.maxCoins} 金币</span>
+          </div>
+        </div>
         <p>
           {status === "won"
             ? `🎉 恭喜通关B${floor}F！累计获得${coins}💰金币，当前血量${hp}/${MAX_HP}❤️，剩余${potions}瓶🧪药水。点击「进入下一层」继续向B${floor + 1}F深入，届时将有更多陷阱和怪物，但金币奖励也会更丰厚！`
@@ -659,6 +858,71 @@ export default function App() {
               : `正在探索B${floor}F，血量${hp}/${MAX_HP}❤️，金币${coins}💰，药水${potions}🧪，${keys > 0 ? "已持有钥匙🔑，赶快找到出口🚪！" : "尚未找到钥匙🔑，继续翻开相邻房间小心前进！"}本层有${getFloorConfig(floor).trapCt}个陷阱⚡和${getFloorConfig(floor).monsterCt}只怪物👹，谨慎行动！`}
         </p>
       </section>
+
+      {showSettlement && settlementData && (
+        <div className="settlement-overlay">
+          <div className={`settlement-modal settlement-${settlementResult}`}>
+            <div className="settlement-header">
+              <h2>{settlementData.resultTitle}</h2>
+              <div className="settlement-stars">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <span key={i} className={`star ${i < settlementData.evaluation.stars ? "star-on" : "star-off"}`}>
+                    ★
+                  </span>
+                ))}
+              </div>
+              <div className="settlement-rank">{settlementData.evaluation.rank}</div>
+              <p className="settlement-comment">{settlementData.evaluation.comment}</p>
+            </div>
+
+            <div className="settlement-stats">
+              <div className="stat-row">
+                <span className="stat-label">🏰 到达层数</span>
+                <span className="stat-value">
+                  B{floor}F
+                  {settlementData.isFloorRecord && <span className="record-tag">新纪录!</span>}
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">💰 金币总数</span>
+                <span className="stat-value">
+                  {coins} 枚
+                  {settlementData.isCoinRecord && <span className="record-tag">新纪录!</span>}
+                </span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">🚪 翻开房间</span>
+                <span className="stat-value">{stats.revealedRooms} 间</span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">⚡ 遭遇陷阱</span>
+                <span className="stat-value">{stats.trapHits} 次</span>
+              </div>
+              <div className="stat-row">
+                <span className="stat-label">👹 击败怪物</span>
+                <span className="stat-value">{stats.monstersDefeated} 只</span>
+              </div>
+            </div>
+
+            <div className="settlement-highscore">
+              <div className="hs-row">
+                <span>🏆 历史最高层数</span>
+                <strong>B{highScore.maxFloor}F</strong>
+              </div>
+              <div className="hs-row">
+                <span>💰 历史最高金币</span>
+                <strong>{highScore.maxCoins} 枚</strong>
+              </div>
+            </div>
+
+            <div className="settlement-actions">
+              <button className="btn-settle-restart" onClick={doResetGame}>
+                🔄 再来一局
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
