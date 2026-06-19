@@ -320,9 +320,14 @@ button {
   transform: scale(0.97);
 }
 
-.actions button:disabled {
+.actions button:disabled,
+.actions button.btn-disabled {
   opacity: 0.35;
   cursor: not-allowed;
+}
+
+.actions button.btn-disabled:active {
+  transform: none;
 }
 
 .btn-reset {

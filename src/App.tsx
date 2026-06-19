@@ -332,9 +332,13 @@ export default function App() {
               重新探索
             </button>
             <button
-              className="btn-potion"
+              className={[
+                "btn-potion",
+                potions <= 0 || hp >= MAX_HP || status !== "playing" ? "btn-disabled" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               onClick={usePotion}
-              disabled={potions <= 0 || hp >= MAX_HP || status !== "playing"}
             >
               使用药水 (🧪 × 1 → 2❤️)
             </button>
