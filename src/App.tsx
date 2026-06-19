@@ -5,7 +5,7 @@ const SIZE = 5;
 const TOTAL = SIZE * SIZE;
 const MAX_HP = 5;
 
-type RoomType = "start" | "coin" | "trap" | "monster" | "key" | "exit" | "empty";
+type RoomType = "start" | "coin" | "trap" | "monster" | "key" | "exit" | "potion" | "empty";
 
 interface Room {
   type: RoomType;
@@ -19,6 +19,7 @@ const SYMBOLS: Record<RoomType, string> = {
   monster: "👹",
   key: "🔑",
   exit: "🚪",
+  potion: "🧪",
   empty: "·",
 };
 
@@ -29,6 +30,7 @@ const DAMAGE_MAP: Record<RoomType, number> = {
   monster: 2,
   key: 0,
   exit: 0,
+  potion: 0,
   empty: 0,
 };
 
@@ -92,10 +94,12 @@ function generateBoard(): Room[] {
     const coinCt = 5;
     const trapCt = 4;
     const monsterCt = 3;
+    const potionCt = 2;
     for (let i = 0; i < rest.length; i++) {
       if (i < coinCt) types[rest[i]] = "coin";
       else if (i < coinCt + trapCt) types[rest[i]] = "trap";
       else if (i < coinCt + trapCt + monsterCt) types[rest[i]] = "monster";
+      else if (i < coinCt + trapCt + monsterCt + potionCt) types[rest[i]] = "potion";
     }
     const d1 = minDamagePath(types, 0, keyIdx);
     const d2 = minDamagePath(types, keyIdx, exitIdx);
@@ -113,6 +117,7 @@ function generateBoard(): Room[] {
   for (let i = 0; i < 3 && i < available.length; i++) fallback[available[i]] = "trap";
   for (let i = 3; i < 5 && i < available.length; i++) fallback[available[i]] = "monster";
   for (let i = 5; i < 10 && i < available.length; i++) fallback[available[i]] = "coin";
+  for (let i = 10; i < 12 && i < available.length; i++) fallback[available[i]] = "potion";
   return fallback.map((t) => ({ type: t, revealed: t === "start" }));
 }
 
@@ -121,6 +126,7 @@ export default function App() {
   const [hp, setHp] = useState(MAX_HP);
   const [coins, setCoins] = useState(0);
   const [keys, setKeys] = useState(0);
+  const [potions, setPotions] = useState(0);
   const [floor, setFloor] = useState(1);
   const [status, setStatus] = useState<"playing" | "won" | "lost">("playing");
   const [log, setLog] = useState<string[]>(["🏠 游戏开始！翻开相邻房间探索地牢"]);
@@ -159,6 +165,7 @@ export default function App() {
       let newHp = hp;
       let newCoins = coins;
       let newKeys = keys;
+      let newPotions = potions;
       let newStatus: "playing" | "won" | "lost" = "playing";
 
       const dmg = DAMAGE_MAP[room.type as keyof typeof DAMAGE_MAP];
@@ -181,6 +188,9 @@ export default function App() {
           newStatus = "won";
           messages.push("🚪 用钥匙打开出口，通关！");
         }
+      } else if (room.type === "potion") {
+        newPotions = potions + 1;
+        messages.push("🧪 发现一瓶药水！已放入背包");
       } else if (room.type === "exit") {
         if (keys > 0) {
           newStatus = "won";
@@ -198,10 +208,11 @@ export default function App() {
       setHp(newHp);
       setCoins(newCoins);
       setKeys(newKeys);
+      setPotions(newPotions);
       setStatus(newStatus);
       setLog((prev: string[]) => [...messages, ...prev].slice(0, 20));
     },
-    [board, hp, coins, keys, status, flippable, exitRevealed]
+    [board, hp, coins, keys, potions, status, flippable, exitRevealed]
   );
 
   const resetGame = useCallback(() => {
@@ -209,6 +220,7 @@ export default function App() {
     setHp(MAX_HP);
     setCoins(0);
     setKeys(0);
+    setPotions(0);
     setFloor(1);
     setStatus("playing");
     setLog(["🏠 重新开始探索！"]);
@@ -223,12 +235,22 @@ export default function App() {
   }, []);
 
   const usePotion = useCallback(() => {
-    if (coins >= 5 && hp < MAX_HP && status === "playing") {
-      setCoins((c: number) => c - 5);
-      setHp((h: number) => Math.min(MAX_HP, h + 2));
-      setLog((prev: string[]) => ["💊 使用5金币恢复2点血量", ...prev].slice(0, 20));
+    if (status !== "playing") {
+      setLog((prev: string[]) => ["❌ 游戏未进行中，无法使用药水", ...prev].slice(0, 20));
+      return;
     }
-  }, [coins, hp, status]);
+    if (potions <= 0) {
+      setLog((prev: string[]) => ["❌ 背包中没有药水，无法使用", ...prev].slice(0, 20));
+      return;
+    }
+    if (hp >= MAX_HP) {
+      setLog((prev: string[]) => ["❌ 血量已满，无需使用药水", ...prev].slice(0, 20));
+      return;
+    }
+    setPotions((p: number) => p - 1);
+    setHp((h: number) => Math.min(MAX_HP, h + 2));
+    setLog((prev: string[]) => ["🧪 使用药水，恢复2点血量", ...prev].slice(0, 20));
+  }, [potions, hp, status]);
 
   return (
     <main className="game-shell">
@@ -252,6 +274,10 @@ export default function App() {
         <article>
           <small>钥匙</small>
           <strong className="stat-key">{keys > 0 ? "🔑" : "✕"}</strong>
+        </article>
+        <article>
+          <small>药水</small>
+          <strong className="stat-potion">🧪 × {potions}</strong>
         </article>
         <article>
           <small>层数</small>
@@ -288,14 +314,15 @@ export default function App() {
         <aside className="side-panel">
           <h2>核心玩法</h2>
           <p>
-            在5×5地牢中逐步翻开相邻房间，可能遇到金币💰、陷阱⚡、怪物👹、钥匙🔑和出口🚪。
-            找到钥匙后前往出口即可通关，血量归零则失败。
+            在5×5地牢中逐步翻开相邻房间，可能遇到金币💰、陷阱⚡、怪物👹、药水🧪、钥匙🔑和出口🚪。
+            找到钥匙后前往出口即可通关，血量归零则失败。药水可以恢复血量。
           </p>
           <div className="legend">
             <span className="leg-start">🏠 起点</span>
             <span className="leg-coin">💰 金币</span>
             <span className="leg-trap">⚡ 陷阱</span>
             <span className="leg-monster">👹 怪物</span>
+            <span className="leg-potion">🧪 药水</span>
             <span className="leg-key">🔑 钥匙</span>
             <span className="leg-exit">🚪 出口</span>
             <span className="leg-empty">· 空房</span>
@@ -307,9 +334,9 @@ export default function App() {
             <button
               className="btn-potion"
               onClick={usePotion}
-              disabled={coins < 5 || hp >= MAX_HP || status !== "playing"}
+              disabled={potions <= 0 || hp >= MAX_HP || status !== "playing"}
             >
-              使用药水 (5💰→2❤️)
+              使用药水 (🧪 × 1 → 2❤️)
             </button>
             <button
               className="btn-next"
@@ -333,10 +360,10 @@ export default function App() {
         <h2>结算预览</h2>
         <p>
           {status === "won"
-            ? `🎉 恭喜通关第${floor}层！获得${coins}金币。点击「进入下一层」继续冒险！`
+            ? `🎉 恭喜通关第${floor}层！获得${coins}金币，剩余${potions}瓶药水。点击「进入下一层」继续冒险！`
             : status === "lost"
               ? "💀 探索失败，血量归零。点击「重新探索」再来一局！"
-              : `正在探索第${floor}层，血量${hp}，金币${coins}，${keys > 0 ? "已持有钥匙🔑" : "尚未找到钥匙"}。继续翻开相邻房间前进！`}
+              : `正在探索第${floor}层，血量${hp}，金币${coins}，药水${potions}瓶，${keys > 0 ? "已持有钥匙🔑" : "尚未找到钥匙"}。继续翻开相邻房间前进！`}
         </p>
       </section>
     </main>
