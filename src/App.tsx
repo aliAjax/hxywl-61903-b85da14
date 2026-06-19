@@ -1,26 +1,32 @@
 import { useCallback, useMemo, useState } from "react";
 import "./styles.css";
+import {
+  GAME_CONSTANTS,
+  EVENT_CONFIG,
+  BATTLE_CONFIG,
+  EVENT_MESSAGES,
+  RoomType,
+  Monster,
+  FloorConfig,
+  getFloorConfig,
+  generateMonster,
+  getCoinReward,
+  getDamage,
+  getSymbol,
+  shuffle,
+  getNeighbors,
+  getTotalCells,
+} from "./config/gameConfig";
 
-const SIZE = 5;
-const TOTAL = SIZE * SIZE;
-const MAX_HP = 5;
-
-type RoomType = "start" | "coin" | "trap" | "monster" | "key" | "exit" | "potion" | "empty";
+const SIZE = GAME_CONSTANTS.boardSize;
+const TOTAL = getTotalCells();
+const MAX_HP = GAME_CONSTANTS.maxHp;
+const HIGH_SCORE_KEY = GAME_CONSTANTS.highScoreKey;
 
 interface Room {
   type: RoomType;
   revealed: boolean;
   defeated?: boolean;
-}
-
-interface Monster {
-  name: string;
-  icon: string;
-  maxHp: number;
-  hp: number;
-  attack: number;
-  coinReward: number;
-  potionDropChance: number;
 }
 
 interface BattleLog {
@@ -55,112 +61,16 @@ interface HighScore {
   maxCoins: number;
 }
 
-const HIGH_SCORE_KEY = "dungeon-high-score";
-
 const SYMBOLS: Record<RoomType, string> = {
-  start: "🏠",
-  coin: "💰",
-  trap: "⚡",
-  monster: "👹",
-  key: "🔑",
-  exit: "🚪",
-  potion: "🧪",
-  empty: "·",
+  start: getSymbol("start"),
+  coin: getSymbol("coin"),
+  trap: getSymbol("trap"),
+  monster: getSymbol("monster"),
+  key: getSymbol("key"),
+  exit: getSymbol("exit"),
+  potion: getSymbol("potion"),
+  empty: getSymbol("empty"),
 };
-
-const DAMAGE_MAP: Record<RoomType, number> = {
-  start: 0,
-  coin: 0,
-  trap: 1,
-  monster: 2,
-  key: 0,
-  exit: 0,
-  potion: 0,
-  empty: 0,
-};
-
-function shuffle<T>(arr: T[]): T[] {
-  const result = [...arr];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
-}
-
-function getNeighbors(idx: number): number[] {
-  const r = Math.floor(idx / SIZE);
-  const c = idx % SIZE;
-  const out: number[] = [];
-  if (r > 0) out.push(idx - SIZE);
-  if (r < SIZE - 1) out.push(idx + SIZE);
-  if (c > 0) out.push(idx - 1);
-  if (c < SIZE - 1) out.push(idx + 1);
-  return out;
-}
-
-interface FloorConfig {
-  coinCt: number;
-  trapCt: number;
-  monsterCt: number;
-  potionCt: number;
-  coinMin: number;
-  coinMax: number;
-  pathMaxDamage: number;
-}
-
-function getFloorConfig(floor: number): FloorConfig {
-  const lv = Math.min(floor, 10);
-  const coinCt = Math.min(5 + Math.floor(lv * 0.7), 10);
-  const trapCt = Math.min(4 + Math.floor(lv * 0.6), 9);
-  const monsterCt = Math.min(3 + Math.floor(lv * 0.5), 7);
-  const potionCt = Math.max(2 - Math.floor((lv - 1) / 3), 1);
-  const coinMin = 1 + Math.floor((lv - 1) / 2);
-  const coinMax = 3 + Math.floor(lv / 2);
-  const pathMaxDamage = MAX_HP + Math.floor((lv - 1) / 2) * 2;
-  return { coinCt, trapCt, monsterCt, potionCt, coinMin, coinMax, pathMaxDamage };
-}
-
-const MONSTER_TEMPLATES = [
-  { name: "史莱姆", icon: "🟢", baseHp: 2, baseAtk: 1, coinBase: 1, potionChance: 0.1 },
-  { name: "骷髅兵", icon: "💀", baseHp: 3, baseAtk: 1, coinBase: 2, potionChance: 0.15 },
-  { name: "蝙蝠", icon: "🦇", baseHp: 2, baseAtk: 2, coinBase: 1, potionChance: 0.05 },
-  { name: "哥布林", icon: "👺", baseHp: 3, baseAtk: 2, coinBase: 3, potionChance: 0.2 },
-  { name: "狼人", icon: "🐺", baseHp: 4, baseAtk: 2, coinBase: 3, potionChance: 0.15 },
-  { name: "石像鬼", icon: "🗿", baseHp: 5, baseAtk: 1, coinBase: 4, potionChance: 0.1 },
-  { name: "火焰精灵", icon: "🔥", baseHp: 3, baseAtk: 3, coinBase: 4, potionChance: 0.25 },
-  { name: "暗影刺客", icon: "🥷", baseHp: 4, baseAtk: 3, coinBase: 5, potionChance: 0.2 },
-];
-
-function generateMonster(floor: number): Monster {
-  const lv = Math.min(floor, 10);
-  const maxTemplateIdx = Math.min(Math.floor(lv / 2) + 2, MONSTER_TEMPLATES.length - 1);
-  const template = MONSTER_TEMPLATES[Math.floor(Math.random() * (maxTemplateIdx + 1))];
-  const hpBonus = Math.floor((lv - 1) / 3);
-  const atkBonus = Math.floor((lv - 1) / 4);
-  const coinBonus = Math.floor((lv - 1) / 2);
-  const maxHp = template.baseHp + hpBonus + Math.floor(Math.random() * 2);
-  return {
-    name: template.name,
-    icon: template.icon,
-    maxHp,
-    hp: maxHp,
-    attack: template.baseAtk + atkBonus,
-    coinReward: template.coinBase + coinBonus + Math.floor(Math.random() * 2),
-    potionDropChance: template.potionChance,
-  };
-}
-
-let battleLogIdCounter = 0;
-
-function createBattleLog(message: string, type: BattleLog["type"]): BattleLog {
-  return { id: ++battleLogIdCounter, message, type };
-}
-
-export function getCoinReward(floor: number): number {
-  const cfg = getFloorConfig(floor);
-  return cfg.coinMin + Math.floor(Math.random() * (cfg.coinMax - cfg.coinMin + 1));
-}
 
 function minDamagePath(types: RoomType[], from: number, to: number): number {
   const dist = new Array<number>(TOTAL).fill(Infinity);
@@ -179,7 +89,7 @@ function minDamagePath(types: RoomType[], from: number, to: number): number {
     visited.add(u);
     for (const v of getNeighbors(u)) {
       if (!visited.has(v)) {
-        const alt = dist[u] + DAMAGE_MAP[types[v]];
+        const alt = dist[u] + getDamage(types[v]);
         if (alt < dist[v]) dist[v] = alt;
       }
     }
@@ -189,7 +99,7 @@ function minDamagePath(types: RoomType[], from: number, to: number): number {
 
 function generateBoard(floor: number = 1): Room[] {
   const cfg = getFloorConfig(floor);
-  const totalAllocated = 2 + cfg.coinCt + cfg.trapCt + cfg.monsterCt + cfg.potionCt;
+  const totalAllocated = cfg.keyCt + cfg.exitCt + cfg.coinCt + cfg.trapCt + cfg.monsterCt + cfg.potionCt;
   const maxAllocatable = TOTAL - 1;
   const overflow = Math.max(0, totalAllocated - maxAllocatable);
   const adjCoin = Math.max(1, cfg.coinCt - Math.ceil(overflow / 2));
@@ -237,6 +147,12 @@ function generateBoard(floor: number = 1): Room[] {
   for (let i = 0; i < fbCoin && idx < available.length; i++, idx++) fallback[available[idx]] = "coin";
   for (let i = 0; i < fbPotion && idx < available.length; i++, idx++) fallback[available[idx]] = "potion";
   return fallback.map((t) => ({ type: t, revealed: t === "start" }));
+}
+
+let battleLogIdCounter = 0;
+
+function createBattleLog(message: string, type: BattleLog["type"]): BattleLog {
+  return { id: ++battleLogIdCounter, message, type };
 }
 
 let recordIdCounter = 0;
@@ -435,7 +351,7 @@ export default function App() {
               id: ++recordIdCounter,
               turn: nextTurn,
               floor,
-              event: "🚪 用钥匙打开出口，通关！",
+              event: EVENT_MESSAGES.exitWithKey,
               roomType: "exit",
               hpDelta: 0,
               coinDelta: 0,
@@ -476,7 +392,7 @@ export default function App() {
             id: ++recordIdCounter,
             turn: nextTurn,
             floor,
-            event: `👹 遭遇 ${monster.icon} ${monster.name}！进入战斗状态`,
+            event: EVENT_MESSAGES.monsterEncounterShort(monster),
             roomType: "monster",
             hpDelta: 0,
             coinDelta: 0,
@@ -487,18 +403,17 @@ export default function App() {
         return;
       }
 
-      const dmg = DAMAGE_MAP[room.type as keyof typeof DAMAGE_MAP];
+      const dmg = getDamage(room.type);
       if (dmg > 0) {
         newHp = Math.max(0, hp - dmg);
         if (room.type === "trap") {
           newStats.trapHits = stats.trapHits + 1;
         }
-        const label = "⚡ 踩到陷阱";
         records.push({
           id: ++recordIdCounter,
           turn: nextTurn,
           floor,
-          event: `${label}，受到${dmg}点伤害！`,
+          event: EVENT_MESSAGES.trapHit(dmg),
           roomType: room.type,
           hpDelta: -dmg,
           coinDelta: 0,
@@ -510,7 +425,7 @@ export default function App() {
             id: ++recordIdCounter,
             turn: nextTurn,
             floor,
-            event: "💀 血量归零，探索失败...",
+            event: EVENT_MESSAGES.death,
             roomType: room.type,
             hpDelta: 0,
             coinDelta: 0,
@@ -527,7 +442,7 @@ export default function App() {
           id: ++recordIdCounter,
           turn: nextTurn,
           floor,
-          event: `💰 发现${gain}枚金币！（B${floor}F奖励加成）`,
+          event: EVENT_MESSAGES.coinFound(gain, floor),
           roomType: "coin",
           hpDelta: 0,
           coinDelta: gain,
@@ -539,7 +454,7 @@ export default function App() {
           id: ++recordIdCounter,
           turn: nextTurn,
           floor,
-          event: "🔑 找到钥匙！",
+          event: EVENT_MESSAGES.keyFound,
           roomType: "key",
           hpDelta: 0,
           coinDelta: 0,
@@ -551,7 +466,7 @@ export default function App() {
             id: ++recordIdCounter,
             turn: nextTurn,
             floor,
-            event: "🚪 用钥匙打开出口，通关！",
+            event: EVENT_MESSAGES.exitWithKey,
             roomType: "exit",
             hpDelta: 0,
             coinDelta: 0,
@@ -564,7 +479,7 @@ export default function App() {
           id: ++recordIdCounter,
           turn: nextTurn,
           floor,
-          event: "🧪 发现一瓶药水！已放入背包",
+          event: EVENT_MESSAGES.potionFound,
           roomType: "potion",
           hpDelta: 0,
           coinDelta: 0,
@@ -577,7 +492,7 @@ export default function App() {
             id: ++recordIdCounter,
             turn: nextTurn,
             floor,
-            event: "🚪 用钥匙打开出口，通关！",
+            event: EVENT_MESSAGES.exitWithKey,
             roomType: "exit",
             hpDelta: 0,
             coinDelta: 0,
@@ -588,7 +503,7 @@ export default function App() {
             id: ++recordIdCounter,
             turn: nextTurn,
             floor,
-            event: "🚪 发现出口，但没有钥匙，无法打开",
+            event: EVENT_MESSAGES.exitNoKey,
             roomType: "exit",
             hpDelta: 0,
             coinDelta: 0,
@@ -600,7 +515,7 @@ export default function App() {
           id: ++recordIdCounter,
           turn: nextTurn,
           floor,
-          event: "· 空房间，什么也没有",
+          event: EVENT_MESSAGES.emptyRoom,
           roomType: "empty",
           hpDelta: 0,
           coinDelta: 0,
@@ -713,7 +628,7 @@ export default function App() {
           id: ++recordIdCounter,
           turn,
           floor,
-          event: "❌ 背包中没有药水，无法使用",
+          event: EVENT_MESSAGES.noPotionLog,
           hpDelta: 0,
           coinDelta: 0,
           items: [],
@@ -728,7 +643,7 @@ export default function App() {
           id: ++recordIdCounter,
           turn,
           floor,
-          event: "❌ 血量已满，无需使用药水",
+          event: EVENT_MESSAGES.hpFullLog,
           hpDelta: 0,
           coinDelta: 0,
           items: [],
@@ -737,15 +652,16 @@ export default function App() {
       ]);
       return;
     }
+    const healAmount = EVENT_CONFIG.potion.healAmount ?? BATTLE_CONFIG.potionHeal;
     setPotions((p: number) => p - 1);
-    setHp((h: number) => Math.min(MAX_HP, h + 2));
+    setHp((h: number) => Math.min(MAX_HP, h + healAmount));
     setHistory((prev: TurnRecord[]) => [
       {
         id: ++recordIdCounter,
         turn,
         floor,
-        event: "🧪 使用药水，恢复2点血量",
-        hpDelta: 2,
+        event: EVENT_MESSAGES.potionUse(healAmount),
+        hpDelta: healAmount,
         coinDelta: 0,
         items: [],
       },
@@ -754,7 +670,7 @@ export default function App() {
   }, [potions, hp, status, turn, floor]);
 
   const endBattle = useCallback(
-    (result: "won" | "lost" | "fled", finalMonster: Monster | null, settleDelay: number = 1200, fleeDamage: number = 1) => {
+    (result: "won" | "lost" | "fled", finalMonster: Monster | null, settleDelay: number = 1200, fleeDamage: number = BATTLE_CONFIG.fleeSuccessDamage) => {
       let finalCoins = coins;
       let finalStats = stats;
       let finalHp = hp;
@@ -779,7 +695,7 @@ export default function App() {
         setBattleLog((prev) => [
           ...prev,
           createBattleLog(
-            `🎉 胜利！获得 ${finalMonster.coinReward} 金币${gotPotion ? "，掉落 1 瓶药水🧪" : ""}`,
+            EVENT_MESSAGES.battleReward(finalMonster.coinReward, gotPotion),
             "reward"
           ),
         ]);
@@ -788,7 +704,7 @@ export default function App() {
             id: ++recordIdCounter,
             turn,
             floor,
-            event: `⚔️ 击败了 ${finalMonster.icon} ${finalMonster.name}！获得 ${finalMonster.coinReward} 金币${gotPotion ? "，掉落 1 瓶药水" : ""}`,
+            event: EVENT_MESSAGES.monsterDefeated(finalMonster, gotPotion),
             roomType: "monster",
             hpDelta: 0,
             coinDelta: finalMonster.coinReward,
@@ -807,14 +723,14 @@ export default function App() {
         );
         setBattleLog((prev) => [
           ...prev,
-          createBattleLog(`房间恢复为危险状态，仍需小心应对`, "system"),
+          createBattleLog(EVENT_MESSAGES.roomResetLog, "system"),
         ]);
         setHistory((prev: TurnRecord[]) => [
           {
             id: ++recordIdCounter,
             turn,
             floor,
-            event: `🏃 逃跑！受到 ${finalFleeDamage} 点伤害，房间恢复危险状态`,
+            event: EVENT_MESSAGES.flee(finalFleeDamage),
             roomType: "monster",
             hpDelta: -finalFleeDamage,
             coinDelta: 0,
@@ -826,7 +742,7 @@ export default function App() {
           setStatus("lost");
           setBattleLog((prev) => [
             ...prev,
-            createBattleLog("💀 失血过多，倒下了...", "system"),
+            createBattleLog(EVENT_MESSAGES.playerDeathLog, "system"),
           ]);
           setTimeout(() => {
             setBattleState("idle");
@@ -846,7 +762,7 @@ export default function App() {
             id: ++recordIdCounter,
             turn,
             floor,
-            event: `💀 被 ${finalMonster?.icon} ${finalMonster?.name} 击败了...`,
+            event: EVENT_MESSAGES.monsterKilledPlayer(finalMonster),
             roomType: "monster",
             hpDelta: 0,
             coinDelta: 0,
@@ -869,16 +785,16 @@ export default function App() {
   const battleAttack = useCallback(() => {
     if (battleState !== "fighting" || !currentMonster) return;
 
-    const playerDamage = 1 + Math.floor(Math.random() * 2);
+    const playerDamage = BATTLE_CONFIG.playerDamageMin + Math.floor(Math.random() * (BATTLE_CONFIG.playerDamageMax - BATTLE_CONFIG.playerDamageMin + 1));
     const newMonsterHp = Math.max(0, currentMonster.hp - playerDamage);
     const updatedMonster = { ...currentMonster, hp: newMonsterHp };
 
     const newLogs: BattleLog[] = [
-      createBattleLog(`你挥剑攻击，造成 ${playerDamage} 点伤害！`, "player"),
+      createBattleLog(EVENT_MESSAGES.playerAttack(playerDamage), "player"),
     ];
 
     if (newMonsterHp <= 0) {
-      newLogs.push(createBattleLog(`${currentMonster.icon} ${currentMonster.name} 被击败了！`, "system"));
+      newLogs.push(createBattleLog(EVENT_MESSAGES.monsterDefeatedLog(currentMonster), "system"));
       setCurrentMonster(updatedMonster);
       setBattleLog((prev) => [...prev, ...newLogs]);
       setTimeout(() => {
@@ -889,7 +805,7 @@ export default function App() {
 
     const monsterDamage = currentMonster.attack;
     newLogs.push(
-      createBattleLog(`${currentMonster.icon} ${currentMonster.name} 反击，造成 ${monsterDamage} 点伤害！`, "monster")
+      createBattleLog(EVENT_MESSAGES.monsterAttack(currentMonster, monsterDamage), "monster")
     );
 
     setCurrentMonster(updatedMonster);
@@ -910,34 +826,35 @@ export default function App() {
     if (potions <= 0) {
       setBattleLog((prev) => [
         ...prev,
-        createBattleLog("❌ 背包中没有药水了！", "system"),
+        createBattleLog(EVENT_MESSAGES.noPotionLog, "system"),
       ]);
       return;
     }
     if (hp >= MAX_HP) {
       setBattleLog((prev) => [
         ...prev,
-        createBattleLog("❌ 血量已满，无需使用药水", "system"),
+        createBattleLog(EVENT_MESSAGES.hpFullLog, "system"),
       ]);
       return;
     }
+    const healAmount = EVENT_CONFIG.potion.healAmount ?? BATTLE_CONFIG.potionHeal;
     setPotions((p) => p - 1);
-    setHp((h) => Math.min(MAX_HP, h + 2));
+    setHp((h) => Math.min(MAX_HP, h + healAmount));
     setBattleLog((prev) => [
       ...prev,
-      createBattleLog("🧪 使用药水，恢复 2 点血量", "player"),
+      createBattleLog(EVENT_MESSAGES.potionUse(healAmount), "player"),
     ]);
   }, [battleState, potions, hp]);
 
   const battleFlee = useCallback(() => {
     if (battleState !== "fighting") return;
-    const fleeSuccess = Math.random() < 0.7;
-    const fleeDamage = fleeSuccess ? 1 : (currentMonster ? currentMonster.attack : 1);
+    const fleeSuccess = Math.random() < BATTLE_CONFIG.fleeSuccessRate;
+    const fleeDamage = fleeSuccess ? BATTLE_CONFIG.fleeSuccessDamage : (currentMonster ? currentMonster.attack : BATTLE_CONFIG.fleeSuccessDamage);
     if (fleeSuccess) {
       setBattleLog((prev) => [
         ...prev,
-        createBattleLog("🏃 你选择逃跑...", "player"),
-        createBattleLog("成功逃脱！但慌乱中受到 1 点伤害", "system"),
+        createBattleLog(EVENT_MESSAGES.fleeAttemptLog, "player"),
+        createBattleLog(EVENT_MESSAGES.fleeSuccessLog(fleeDamage), "system"),
       ]);
       setTimeout(() => {
         endBattle("fled", currentMonster, 1200, fleeDamage);
@@ -945,8 +862,8 @@ export default function App() {
     } else {
       setBattleLog((prev) => [
         ...prev,
-        createBattleLog("🏃 你选择逃跑...", "player"),
-        createBattleLog(`逃跑失败！被怪物追击，受到 ${fleeDamage} 点伤害！`, "monster"),
+        createBattleLog(EVENT_MESSAGES.fleeAttemptLog, "player"),
+        createBattleLog(EVENT_MESSAGES.fleeFailLog(fleeDamage), "monster"),
       ]);
       const nextHp = hp - fleeDamage;
       if (nextHp <= 0) {
@@ -985,6 +902,8 @@ export default function App() {
       isCoinRecord: brokeCoinRecord,
     };
   }, [showSettlement, settlementResult, floor, coins, stats, hp, brokeFloorRecord, brokeCoinRecord]);
+
+  const floorCfg: FloorConfig = getFloorConfig(floor);
 
   return (
     <main className="game-shell">
@@ -1057,7 +976,7 @@ export default function App() {
         <aside className="side-panel">
           <h2>核心玩法</h2>
           <p>
-            在5×5地牢中逐步翻开相邻房间，寻找钥匙🔑后打开出口🚪即可进入下一层。
+            在{SIZE}×{SIZE}地牢中逐步翻开相邻房间，寻找钥匙🔑后打开出口🚪即可进入下一层。
             层数越高，陷阱⚡和怪物👹越多，但金币💰奖励也更丰厚。
             进入下一层会保留血量、金币和药水，失败或「重新探索」则完全重置。
           </p>
@@ -1074,11 +993,11 @@ export default function App() {
           <div className="floor-info">
             <small>B{floor}F 难度配置</small>
             <div className="floor-config">
-              <span>陷阱 {getFloorConfig(floor).trapCt}</span>
-              <span>怪物 {getFloorConfig(floor).monsterCt}</span>
-              <span>金币房 {getFloorConfig(floor).coinCt}</span>
-              <span>药水 {getFloorConfig(floor).potionCt}</span>
-              <span>金币 {getFloorConfig(floor).coinMin}~{getFloorConfig(floor).coinMax}/堆</span>
+              <span>陷阱 {floorCfg.trapCt}</span>
+              <span>怪物 {floorCfg.monsterCt}</span>
+              <span>金币房 {floorCfg.coinCt}</span>
+              <span>药水 {floorCfg.potionCt}</span>
+              <span>金币 {floorCfg.coinMin}~{floorCfg.coinMax}/堆</span>
             </div>
           </div>
           <div className="actions">
@@ -1094,7 +1013,7 @@ export default function App() {
                 .join(" ")}
               onClick={usePotion}
             >
-              使用药水 (🧪 × 1 → 2❤️)
+              使用药水 (🧪 × 1 → {EVENT_CONFIG.potion.healAmount ?? BATTLE_CONFIG.potionHeal}❤️)
             </button>
             <button
               className="btn-next"
@@ -1176,7 +1095,7 @@ export default function App() {
             ? `🎉 恭喜通关B${floor}F！累计获得${coins}💰金币，当前血量${hp}/${MAX_HP}❤️，剩余${potions}瓶🧪药水。点击「进入下一层」继续向B${floor + 1}F深入，届时将有更多陷阱和怪物，但金币奖励也会更丰厚！`
             : status === "lost"
               ? `💀 探索失败，在B${floor}F血量归零。共获得${coins}💰金币，到达B${floor}F。点击「重新探索」从B1F再次挑战！`
-              : `正在探索B${floor}F，血量${hp}/${MAX_HP}❤️，金币${coins}💰，药水${potions}🧪，${keys > 0 ? "已持有钥匙🔑，赶快找到出口🚪！" : "尚未找到钥匙🔑，继续翻开相邻房间小心前进！"}本层有${getFloorConfig(floor).trapCt}个陷阱⚡和${getFloorConfig(floor).monsterCt}只怪物👹，谨慎行动！`}
+              : `正在探索B${floor}F，血量${hp}/${MAX_HP}❤️，金币${coins}💰，药水${potions}🧪，${keys > 0 ? "已持有钥匙🔑，赶快找到出口🚪！" : "尚未找到钥匙🔑，继续翻开相邻房间小心前进！"}本层有${floorCfg.trapCt}个陷阱⚡和${floorCfg.monsterCt}只怪物👹，谨慎行动！`}
         </p>
       </section>
 
