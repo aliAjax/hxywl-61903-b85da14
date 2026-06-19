@@ -20,6 +20,7 @@ export interface FloorCountRule {
   maxFloor?: number;
   cap: number;
   floor: number;
+  decayInterval?: number;
 }
 
 export interface FloorCoinRule {
@@ -134,7 +135,7 @@ export const FLOOR_COUNT_RULES: Record<"coin" | "trap" | "monster" | "potion" | 
   coin: { base: 5, growth: 0.7, cap: 10, floor: 10 },
   trap: { base: 4, growth: 0.6, cap: 9, floor: 10 },
   monster: { base: 3, growth: 0.5, cap: 7, floor: 10 },
-  potion: { base: 2, growth: -1 / 3, cap: 99, minFloor: 1, floor: 10 },
+  potion: { base: 2, growth: -1, decayInterval: 3, cap: 99, minFloor: 1, floor: 10 },
   key: { base: 1, growth: 0, cap: 1, floor: 10 },
   exit: { base: 1, growth: 0, cap: 1, floor: 10 },
 };
@@ -157,11 +158,11 @@ export const MONSTER_TEMPLATES: MonsterTemplate[] = [
   { name: "史莱姆", icon: "🟢", baseHp: 2, baseAtk: 1, coinBase: 1, potionChance: 0.1, unlockFloor: 1 },
   { name: "骷髅兵", icon: "💀", baseHp: 3, baseAtk: 1, coinBase: 2, potionChance: 0.15, unlockFloor: 1 },
   { name: "蝙蝠", icon: "🦇", baseHp: 2, baseAtk: 2, coinBase: 1, potionChance: 0.05, unlockFloor: 1 },
-  { name: "哥布林", icon: "👺", baseHp: 3, baseAtk: 2, coinBase: 3, potionChance: 0.2, unlockFloor: 3 },
-  { name: "狼人", icon: "🐺", baseHp: 4, baseAtk: 2, coinBase: 3, potionChance: 0.15, unlockFloor: 5 },
-  { name: "石像鬼", icon: "🗿", baseHp: 5, baseAtk: 1, coinBase: 4, potionChance: 0.1, unlockFloor: 5 },
-  { name: "火焰精灵", icon: "🔥", baseHp: 3, baseAtk: 3, coinBase: 4, potionChance: 0.25, unlockFloor: 7 },
-  { name: "暗影刺客", icon: "🥷", baseHp: 4, baseAtk: 3, coinBase: 5, potionChance: 0.2, unlockFloor: 9 },
+  { name: "哥布林", icon: "👺", baseHp: 3, baseAtk: 2, coinBase: 3, potionChance: 0.2, unlockFloor: 2 },
+  { name: "狼人", icon: "🐺", baseHp: 4, baseAtk: 2, coinBase: 3, potionChance: 0.15, unlockFloor: 4 },
+  { name: "石像鬼", icon: "🗿", baseHp: 5, baseAtk: 1, coinBase: 4, potionChance: 0.1, unlockFloor: 6 },
+  { name: "火焰精灵", icon: "🔥", baseHp: 3, baseAtk: 3, coinBase: 4, potionChance: 0.25, unlockFloor: 8 },
+  { name: "暗影刺客", icon: "🥷", baseHp: 4, baseAtk: 3, coinBase: 5, potionChance: 0.2, unlockFloor: 10 },
 ];
 
 export const MONSTER_GROWTH: MonsterGrowth = {
@@ -220,7 +221,11 @@ export function calcFloorCount(rule: FloorCountRule, floor: number): number {
   const lv = Math.min(floor, rule.floor);
   let result: number;
   if (rule.growth < 0) {
-    result = rule.base + Math.floor((lv - 1) * rule.growth);
+    if (rule.decayInterval) {
+      result = rule.base - Math.floor((lv - 1) / rule.decayInterval);
+    } else {
+      result = rule.base + Math.floor((lv - 1) * rule.growth);
+    }
     result = Math.max(result, rule.minFloor ?? 1);
   } else {
     result = rule.base + Math.floor(lv * rule.growth);
