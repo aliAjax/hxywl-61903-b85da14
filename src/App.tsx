@@ -754,7 +754,7 @@ export default function App() {
   }, [potions, hp, status, turn, floor]);
 
   const endBattle = useCallback(
-    (result: "won" | "lost" | "fled", finalMonster: Monster | null, settleDelay: number = 1200) => {
+    (result: "won" | "lost" | "fled", finalMonster: Monster | null, settleDelay: number = 1200, fleeDamage: number = 1) => {
       let finalCoins = coins;
       let finalStats = stats;
       let finalHp = hp;
@@ -797,7 +797,7 @@ export default function App() {
           ...prev,
         ]);
       } else if (result === "fled") {
-        finalFleeDamage = 1;
+        finalFleeDamage = fleeDamage;
         finalHp = Math.max(0, hp - finalFleeDamage);
         setHp(finalHp);
         setBoard((prev: Room[]) =>
@@ -805,12 +805,16 @@ export default function App() {
             i === battleRoomIdx ? { ...r, revealed: false, defeated: false } : r
           )
         );
+        setBattleLog((prev) => [
+          ...prev,
+          createBattleLog(`房间恢复为危险状态，仍需小心应对`, "system"),
+        ]);
         setHistory((prev: TurnRecord[]) => [
           {
             id: ++recordIdCounter,
             turn,
             floor,
-            event: `🏃 逃跑成功！但受到 ${finalFleeDamage} 点伤害，房间恢复危险状态`,
+            event: `🏃 逃跑！受到 ${finalFleeDamage} 点伤害，房间恢复危险状态`,
             roomType: "monster",
             hpDelta: -finalFleeDamage,
             coinDelta: 0,
@@ -927,6 +931,7 @@ export default function App() {
   const battleFlee = useCallback(() => {
     if (battleState !== "fighting") return;
     const fleeSuccess = Math.random() < 0.7;
+    const fleeDamage = fleeSuccess ? 1 : (currentMonster ? currentMonster.attack : 1);
     if (fleeSuccess) {
       setBattleLog((prev) => [
         ...prev,
@@ -934,26 +939,26 @@ export default function App() {
         createBattleLog("成功逃脱！但慌乱中受到 1 点伤害", "system"),
       ]);
       setTimeout(() => {
-        endBattle("fled", currentMonster);
+        endBattle("fled", currentMonster, 1200, fleeDamage);
       }, 600);
     } else {
-      const damage = currentMonster ? currentMonster.attack : 1;
       setBattleLog((prev) => [
         ...prev,
         createBattleLog("🏃 你选择逃跑...", "player"),
-        createBattleLog(`逃跑失败！被怪物追击，受到 ${damage} 点伤害！`, "monster"),
+        createBattleLog(`逃跑失败！被怪物追击，受到 ${fleeDamage} 点伤害！`, "monster"),
       ]);
-      setHp((h) => {
-        const newHp = Math.max(0, h - damage);
-        if (newHp <= 0) {
-          setTimeout(() => {
-            endBattle("lost", currentMonster, 1500);
-          }, 500);
-        }
-        return newHp;
-      });
+      const nextHp = hp - fleeDamage;
+      if (nextHp <= 0) {
+        setTimeout(() => {
+          endBattle("lost", currentMonster, 1500);
+        }, 500);
+      } else {
+        setTimeout(() => {
+          endBattle("fled", currentMonster, 1200, fleeDamage);
+        }, 600);
+      }
     }
-  }, [battleState, currentMonster, endBattle]);
+  }, [battleState, currentMonster, endBattle, hp]);
 
   const closeBattle = useCallback(() => {
     if (battleState === "fighting") return;
