@@ -107,7 +107,12 @@ function generateBoard(): Room[] {
   fallback[0] = "start";
   fallback[12] = "key";
   fallback[24] = "exit";
-  for (let i = 0; i < 6; i++) fallback[4 + i * 4] = "coin";
+  const safeCorridor = new Set([0, 1, 2, 7, 12, 17, 22, 23, 24]);
+  const allPositions = Array.from({ length: TOTAL }, (_, i) => i);
+  const available = shuffle(allPositions.filter((i) => !safeCorridor.has(i)));
+  for (let i = 0; i < 3 && i < available.length; i++) fallback[available[i]] = "trap";
+  for (let i = 3; i < 5 && i < available.length; i++) fallback[available[i]] = "monster";
+  for (let i = 5; i < 10 && i < available.length; i++) fallback[available[i]] = "coin";
   return fallback.map((t) => ({ type: t, revealed: t === "start" }));
 }
 
