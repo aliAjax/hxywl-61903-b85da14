@@ -64,6 +64,32 @@ interface TurnRecord {
 
 type GameResultType = "clear" | "death" | "restart";
 
+type HistoryFilter = "all" | "battle" | "trap" | "coin" | "item" | "floor";
+
+interface FilterOption {
+  key: HistoryFilter;
+  label: string;
+  icon: string;
+  match: (rec: TurnRecord) => boolean;
+}
+
+const HISTORY_FILTERS: FilterOption[] = [
+  { key: "all", label: "全部", icon: "📋", match: () => true },
+  { key: "battle", label: "战斗", icon: "⚔️", match: (r) => r.roomType === "monster" },
+  { key: "trap", label: "陷阱", icon: "⚡", match: (r) => r.roomType === "trap" },
+  { key: "coin", label: "金币", icon: "💰", match: (r) => r.roomType === "coin" },
+  { key: "item", label: "道具", icon: "🔑", match: (r) => r.roomType === "key" || r.roomType === "potion" },
+  {
+    key: "floor",
+    label: "楼层",
+    icon: "🚪",
+    match: (r) =>
+      r.roomType === "exit" ||
+      r.roomType === "start" ||
+      (!r.roomType && /^(🏠|⬆️|💾)/.test(r.event)),
+  },
+];
+
 interface GameStats {
   revealedRooms: number;
   trapHits: number;
@@ -269,6 +295,7 @@ export default function App() {
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [revealAllRooms, setRevealAllRooms] = useState(false);
+  const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
 
   const saveRestoredRef = useRef(!!loadedSave);
 
@@ -986,6 +1013,16 @@ export default function App() {
     return board;
   }, [board, revealAllRooms]);
 
+  const activeFilter = useMemo(
+    () => HISTORY_FILTERS.find((f) => f.key === historyFilter) ?? HISTORY_FILTERS[0],
+    [historyFilter]
+  );
+
+  const filteredHistory = useMemo(
+    () => (historyFilter === "all" ? history : history.filter((r) => activeFilter.match(r))),
+    [history, historyFilter, activeFilter]
+  );
+
   const floorCfg: FloorConfig = getFloorConfig(floor);
 
   return (
@@ -1134,33 +1171,52 @@ export default function App() {
       <section className="history-panel">
         <div className="history-header">
           <h2>📜 回合记录</h2>
-          <span className="history-count">共 {history.length} 条</span>
+          <span className="history-count">
+            {historyFilter === "all"
+              ? `共 ${history.length} 条`
+              : `${filteredHistory.length}/${history.length} 条`}
+          </span>
+        </div>
+        <div className="history-filters">
+          {HISTORY_FILTERS.map((f) => (
+            <button
+              key={f.key}
+              className={`history-filter-btn ${historyFilter === f.key ? "filter-active" : ""}`}
+              onClick={() => setHistoryFilter(f.key)}
+            >
+              {f.icon} {f.label}
+            </button>
+          ))}
         </div>
         <div className="history-list history-full">
-          {history.map((rec: TurnRecord, i: number) => (
-            <div key={rec.id} className={`history-item ${i === 0 ? "history-latest" : ""}`}>
-              <div className="history-main">
-                <span className="history-turn">B{rec.floor}F · 回合 {rec.turn}</span>
-                <span className="history-event">{rec.event}</span>
+          {filteredHistory.length === 0 ? (
+            <div className="history-empty">暂无{activeFilter.label}类记录</div>
+          ) : (
+            filteredHistory.map((rec: TurnRecord, i: number) => (
+              <div key={rec.id} className={`history-item ${i === 0 ? "history-latest" : ""}`}>
+                <div className="history-main">
+                  <span className="history-turn">B{rec.floor}F · 回合 {rec.turn}</span>
+                  <span className="history-event">{rec.event}</span>
+                </div>
+                <div className="history-deltas">
+                  {rec.hpDelta !== 0 && (
+                    <span className={rec.hpDelta > 0 ? "delta-hp-gain" : "delta-hp-loss"}>
+                      {rec.hpDelta > 0 ? `+${rec.hpDelta}❤️` : `${rec.hpDelta}❤️`}
+                    </span>
+                  )}
+                  {rec.coinDelta !== 0 && (
+                    <span className="delta-coin">+{rec.coinDelta}💰</span>
+                  )}
+                  {rec.items.map((item, idx) => (
+                    <span key={idx} className="delta-item">{item}</span>
+                  ))}
+                  {rec.hpDelta === 0 && rec.coinDelta === 0 && rec.items.length === 0 && (
+                    <span className="delta-none">—</span>
+                  )}
+                </div>
               </div>
-              <div className="history-deltas">
-                {rec.hpDelta !== 0 && (
-                  <span className={rec.hpDelta > 0 ? "delta-hp-gain" : "delta-hp-loss"}>
-                    {rec.hpDelta > 0 ? `+${rec.hpDelta}❤️` : `${rec.hpDelta}❤️`}
-                  </span>
-                )}
-                {rec.coinDelta !== 0 && (
-                  <span className="delta-coin">+{rec.coinDelta}💰</span>
-                )}
-                {rec.items.map((item, idx) => (
-                  <span key={idx} className="delta-item">{item}</span>
-                ))}
-                {rec.hpDelta === 0 && rec.coinDelta === 0 && rec.items.length === 0 && (
-                  <span className="delta-none">—</span>
-                )}
-              </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </section>
 
