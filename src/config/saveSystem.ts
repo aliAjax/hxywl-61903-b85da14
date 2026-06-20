@@ -268,6 +268,12 @@ export function sanitizeSave(save: SaveData): { save: SaveData; battleRepaired: 
     return { save: repaired, battleRepaired: false };
   }
 
+  if (repaired.hp <= 0) {
+    repaired.status = "lost";
+    resetBattleState(repaired);
+    return { save: repaired, battleRepaired: true };
+  }
+
   if (repaired.status === "won" && repaired.battleState === "fighting") {
     resetBattleRoom(repaired);
     resetBattleState(repaired);
@@ -333,6 +339,7 @@ function isFightingStateConsistent(save: SaveData): boolean {
   if (!room.revealed) return false;
   if (room.defeated) return false;
   if (save.status !== "playing") return false;
+  if (save.hp <= 0) return false;
   return true;
 }
 
