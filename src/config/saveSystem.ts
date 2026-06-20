@@ -44,6 +44,8 @@ interface SavedGameStats {
   revealedRooms: number;
   trapHits: number;
   monstersDefeated: number;
+  potionsUsed?: number;
+  fleeCount?: number;
 }
 
 export interface SaveData {
@@ -130,6 +132,8 @@ function validateGameStats(stats: unknown): stats is SavedGameStats {
   if (!isNumber(stats.revealedRooms) || (stats.revealedRooms as number) < 0) return false;
   if (!isNumber(stats.trapHits) || (stats.trapHits as number) < 0) return false;
   if (!isNumber(stats.monstersDefeated) || (stats.monstersDefeated as number) < 0) return false;
+  if (stats.potionsUsed !== undefined && (!isNumber(stats.potionsUsed) || (stats.potionsUsed as number) < 0)) return false;
+  if (stats.fleeCount !== undefined && (!isNumber(stats.fleeCount) || (stats.fleeCount as number) < 0)) return false;
   return true;
 }
 

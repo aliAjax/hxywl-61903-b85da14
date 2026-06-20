@@ -94,6 +94,8 @@ interface GameStats {
   revealedRooms: number;
   trapHits: number;
   monstersDefeated: number;
+  potionsUsed: number;
+  fleeCount: number;
 }
 
 interface HighScore {
@@ -247,10 +249,83 @@ function evaluateGame(
   return { rank, comment, stars };
 }
 
+interface HighlightItem {
+  icon: string;
+  text: string;
+  priority: number;
+}
+
+function generateHighlights(
+  resultType: GameResultType,
+  finalFloor: number,
+  finalCoins: number,
+  currentStats: GameStats,
+  isFloorRecord: boolean,
+  isCoinRecord: boolean
+): HighlightItem[] {
+  const candidates: HighlightItem[] = [];
+
+  if (isFloorRecord && finalFloor > 1) {
+    candidates.push({ icon: "🏆", text: `刷新纪录！到达 B${finalFloor}F`, priority: 100 });
+  }
+  if (isCoinRecord && finalCoins > 0) {
+    candidates.push({ icon: "💰", text: `刷新纪录！获得 ${finalCoins} 金币`, priority: 95 });
+  }
+  if (resultType === "clear" && currentStats.trapHits === 0) {
+    candidates.push({ icon: "✨", text: "完美闪避！全程未踩陷阱", priority: 85 });
+  }
+  if (currentStats.monstersDefeated >= 3) {
+    candidates.push({ icon: "⚔️", text: `勇猛善战！击败 ${currentStats.monstersDefeated} 只怪物`, priority: 80 });
+  } else if (currentStats.monstersDefeated > 0) {
+    candidates.push({ icon: "⚔️", text: `击败了 ${currentStats.monstersDefeated} 只怪物`, priority: 50 });
+  }
+  if (currentStats.trapHits >= 3) {
+    candidates.push({ icon: "⚡", text: `步履维艰！踩中 ${currentStats.trapHits} 次陷阱`, priority: 70 });
+  } else if (currentStats.trapHits > 0) {
+    candidates.push({ icon: "⚡", text: `踩中 ${currentStats.trapHits} 次陷阱`, priority: 40 });
+  }
+  if (currentStats.potionsUsed >= 2) {
+    candidates.push({ icon: "🧪", text: `药水依赖！使用了 ${currentStats.potionsUsed} 次药水`, priority: 60 });
+  } else if (currentStats.potionsUsed > 0) {
+    candidates.push({ icon: "🧪", text: `使用了 ${currentStats.potionsUsed} 次药水`, priority: 35 });
+  }
+  if (currentStats.fleeCount >= 2) {
+    candidates.push({ icon: "🏃", text: `战术撤退！逃跑了 ${currentStats.fleeCount} 次`, priority: 55 });
+  } else if (currentStats.fleeCount > 0) {
+    candidates.push({ icon: "🏃", text: `逃跑了 ${currentStats.fleeCount} 次`, priority: 30 });
+  }
+  if (currentStats.revealedRooms >= 20) {
+    candidates.push({ icon: "🗺️", text: `探索达人！翻开了 ${currentStats.revealedRooms} 间房`, priority: 45 });
+  } else if (currentStats.revealedRooms >= 5) {
+    candidates.push({ icon: "🗺️", text: `探索了 ${currentStats.revealedRooms} 间房`, priority: 25 });
+  }
+
+  if (candidates.length < 3 && finalFloor > 1) {
+    candidates.push({ icon: "🏰", text: `到达了 B${finalFloor}F`, priority: 20 });
+  }
+  if (candidates.length < 3 && finalCoins > 0) {
+    candidates.push({ icon: "💰", text: `收集了 ${finalCoins} 金币`, priority: 15 });
+  }
+  if (candidates.length < 3) {
+    if (resultType === "clear") {
+      candidates.push({ icon: "🎉", text: "成功通关本层！", priority: 18 });
+    } else if (resultType === "death") {
+      candidates.push({ icon: "💀", text: "在战斗中倒下了...", priority: 18 });
+    } else {
+      candidates.push({ icon: "🗺️", text: `翻开了 ${currentStats.revealedRooms} 间房`, priority: 10 });
+    }
+  }
+
+  candidates.sort((a, b) => b.priority - a.priority);
+  return candidates.slice(0, 3);
+}
+
 const INITIAL_STATS: GameStats = {
   revealedRooms: 1,
   trapHits: 0,
   monstersDefeated: 0,
+  potionsUsed: 0,
+  fleeCount: 0,
 };
 
 export default function App() {
@@ -265,7 +340,19 @@ export default function App() {
   const [floor, setFloor] = useState(initialFloor);
   const [status, setStatus] = useState<"playing" | "won" | "lost">(loadedSave?.status ?? "playing");
   const [turn, setTurn] = useState(loadedSave?.turn ?? 0);
-  const [stats, setStats] = useState<GameStats>(loadedSave?.stats ?? INITIAL_STATS);
+  const [stats, setStats] = useState<GameStats>(() => {
+    const s = loadedSave?.stats;
+    if (s) {
+      return {
+        revealedRooms: s.revealedRooms,
+        trapHits: s.trapHits,
+        monstersDefeated: s.monstersDefeated,
+        potionsUsed: s.potionsUsed ?? 0,
+        fleeCount: s.fleeCount ?? 0,
+      };
+    }
+    return INITIAL_STATS;
+  });
   const [showSettlement, setShowSettlement] = useState(false);
   const [settlementResult, setSettlementResult] = useState<GameResultType | null>(null);
   const [highScore, setHighScore] = useState<HighScore>(() => loadHighScore());
@@ -735,6 +822,7 @@ export default function App() {
     const healAmount = EVENT_CONFIG.potion.healAmount ?? BATTLE_CONFIG.potionHeal;
     setPotions((p: number) => p - 1);
     setHp((h: number) => Math.min(MAX_HP, h + healAmount));
+    setStats((s: GameStats) => ({ ...s, potionsUsed: s.potionsUsed + 1 }));
     setHistory((prev: TurnRecord[]) => [
       {
         id: ++recordIdCounter,
@@ -795,7 +883,9 @@ export default function App() {
       } else if (result === "fled") {
         finalFleeDamage = fleeDamage;
         finalHp = Math.max(0, hp - finalFleeDamage);
+        finalStats = { ...stats, fleeCount: stats.fleeCount + 1 };
         setHp(finalHp);
+        setStats(finalStats);
         setBoard((prev: Room[]) =>
           prev.map((r: Room, i: number) =>
             i === battleRoomIdx ? { ...r, revealed: false, defeated: false } : r
@@ -920,6 +1010,7 @@ export default function App() {
     const healAmount = EVENT_CONFIG.potion.healAmount ?? BATTLE_CONFIG.potionHeal;
     setPotions((p) => p - 1);
     setHp((h) => Math.min(MAX_HP, h + healAmount));
+    setStats((s: GameStats) => ({ ...s, potionsUsed: s.potionsUsed + 1 }));
     setBattleLog((prev) => [
       ...prev,
       createBattleLog(EVENT_MESSAGES.potionUse(healAmount), "player"),
@@ -975,11 +1066,20 @@ export default function App() {
         : settlementResult === "death"
           ? "💀 探索失败"
           : "🏃 主动结束";
+    const highlights = generateHighlights(
+      settlementResult,
+      floor,
+      coins,
+      stats,
+      brokeFloorRecord,
+      brokeCoinRecord
+    );
     return {
       evaluation,
       resultTitle,
       isFloorRecord: brokeFloorRecord,
       isCoinRecord: brokeCoinRecord,
+      highlights,
     };
   }, [showSettlement, settlementResult, floor, coins, stats, hp, brokeFloorRecord, brokeCoinRecord]);
 
@@ -1440,6 +1540,20 @@ export default function App() {
                 <span className="stat-value">{stats.monstersDefeated} 只</span>
               </div>
             </div>
+
+            {settlementData.highlights.length > 0 && (
+              <div className="settlement-highlights">
+                <div className="highlights-title">✨ 本局亮点</div>
+                <div className="highlights-list">
+                  {settlementData.highlights.map((h, i) => (
+                    <div key={i} className="highlight-item" style={{ animationDelay: `${(i + 1) * 120}ms` }}>
+                      <span className="highlight-icon">{h.icon}</span>
+                      <span className="highlight-text">{h.text}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="settlement-highscore">
               <div className="hs-row">
