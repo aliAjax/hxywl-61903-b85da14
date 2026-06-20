@@ -65,6 +65,11 @@ export interface SaveData {
   history: SavedTurnRecord[];
 }
 
+export interface LoadResult {
+  save: SaveData;
+  battleRepaired: boolean;
+}
+
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -189,13 +194,13 @@ export function validateSaveData(data: unknown): { valid: boolean; save: SaveDat
     }
   }
 
-  if (data.battleState === "fighting") {
+  if ((data.battleState as string) !== "idle") {
     if (data.currentMonster !== null && data.currentMonster !== undefined) {
       if (!validateMonster(data.currentMonster)) {
         return { valid: false, save: null, reason: "怪物数据异常" };
       }
     }
-    if (!isNumber(data.battleRoomIdx) || (data.battleRoomIdx as number) < 0 || (data.battleRoomIdx as number) >= expectedCells) {
+    if (!isNumber(data.battleRoomIdx) || (data.battleRoomIdx as number) < -1 || (data.battleRoomIdx as number) >= expectedCells) {
       return { valid: false, save: null, reason: "战斗房间索引异常" };
     }
   }
@@ -221,6 +226,111 @@ export function validateSaveData(data: unknown): { valid: boolean; save: SaveDat
   return { valid: true, save: data as unknown as SaveData, reason: "" };
 }
 
+function resetBattleState(save: SaveData): void {
+  save.battleState = "idle";
+  save.currentMonster = null;
+  save.battleLog = [];
+  save.battleRoomIdx = -1;
+}
+
+function resetBattleRoom(save: SaveData): void {
+  const idx = save.battleRoomIdx;
+  if (idx >= 0 && idx < save.board.length) {
+    save.board[idx] = { ...save.board[idx], revealed: false, defeated: false };
+  }
+}
+
+export function sanitizeSave(save: SaveData): { save: SaveData; battleRepaired: boolean } {
+  const repaired = { ...save, board: save.board.map((r) => ({ ...r })) };
+  let battleRepaired = false;
+
+  if (repaired.battleState === "idle") {
+    if (repaired.currentMonster !== null || repaired.battleRoomIdx !== -1) {
+      resetBattleState(repaired);
+      battleRepaired = true;
+    }
+    return { save: repaired, battleRepaired };
+  }
+
+  if (repaired.status === "lost") {
+    resetBattleState(repaired);
+    return { save: repaired, battleRepaired: false };
+  }
+
+  if (repaired.status === "won" && repaired.battleState === "fighting") {
+    resetBattleRoom(repaired);
+    resetBattleState(repaired);
+    battleRepaired = true;
+    return { save: repaired, battleRepaired };
+  }
+
+  if (repaired.battleState === "won" || repaired.battleState === "lost" || repaired.battleState === "fled") {
+    if (repaired.battleState === "won") {
+      if (repaired.battleRoomIdx >= 0 && repaired.battleRoomIdx < repaired.board.length) {
+        if (!repaired.board[repaired.battleRoomIdx].defeated) {
+          repaired.board[repaired.battleRoomIdx] = {
+            ...repaired.board[repaired.battleRoomIdx],
+            defeated: true,
+            revealed: true,
+          };
+          battleRepaired = true;
+        }
+      }
+    }
+    if (repaired.battleState === "fled") {
+      if (repaired.battleRoomIdx >= 0 && repaired.battleRoomIdx < repaired.board.length) {
+        if (repaired.board[repaired.battleRoomIdx].revealed) {
+          repaired.board[repaired.battleRoomIdx] = {
+            ...repaired.board[repaired.battleRoomIdx],
+            revealed: false,
+            defeated: false,
+          };
+          battleRepaired = true;
+        }
+      }
+    }
+    if (repaired.battleState === "lost") {
+      resetBattleState(repaired);
+      return { save: repaired, battleRepaired: true };
+    }
+    resetBattleState(repaired);
+    return { save: repaired, battleRepaired };
+  }
+
+  if (repaired.battleState === "fighting") {
+    const needsRepair = !isFightingStateConsistent(repaired);
+    if (needsRepair) {
+      console.warn("战斗存档状态不一致，将重置战斗并恢复房间为未翻开状态");
+      resetBattleRoom(repaired);
+      resetBattleState(repaired);
+      battleRepaired = true;
+    } else {
+      clampMonsterHp(repaired);
+    }
+  }
+
+  return { save: repaired, battleRepaired };
+}
+
+function isFightingStateConsistent(save: SaveData): boolean {
+  if (save.currentMonster === null) return false;
+  if (save.currentMonster.hp <= 0) return false;
+  if (save.currentMonster.hp > save.currentMonster.maxHp) return false;
+  if (save.battleRoomIdx < 0 || save.battleRoomIdx >= save.board.length) return false;
+  const room = save.board[save.battleRoomIdx];
+  if (room.type !== "monster") return false;
+  if (!room.revealed) return false;
+  if (room.defeated) return false;
+  if (save.status !== "playing") return false;
+  return true;
+}
+
+function clampMonsterHp(save: SaveData): void {
+  if (save.currentMonster && save.currentMonster.hp > save.currentMonster.maxHp) {
+    save.currentMonster = { ...save.currentMonster, hp: save.currentMonster.maxHp };
+  }
+}
+
 export function saveGame(state: Omit<SaveData, "version" | "timestamp">): void {
   try {
     const data: SaveData = {
@@ -234,7 +344,7 @@ export function saveGame(state: Omit<SaveData, "version" | "timestamp">): void {
   }
 }
 
-export function loadGame(): SaveData | null {
+export function loadGame(): LoadResult | null {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
@@ -245,17 +355,23 @@ export function loadGame(): SaveData | null {
       clearSave();
       return null;
     }
-    if (save!.battleState === "won" || save!.battleState === "lost" || save!.battleState === "fled") {
-      save!.battleState = "idle";
-      save!.currentMonster = null;
-      save!.battleLog = [];
-      save!.battleRoomIdx = -1;
-    }
-    if (save!.status === "lost") {
+    const { save: sanitized, battleRepaired } = sanitizeSave(save!);
+    if (sanitized.status === "lost") {
       clearSave();
       return null;
     }
-    return save;
+    if (battleRepaired) {
+      try {
+        localStorage.setItem(SAVE_KEY, JSON.stringify({
+          ...sanitized,
+          version: CURRENT_SAVE_VERSION,
+          timestamp: Date.now(),
+        }));
+      } catch {
+        /* ignore */
+      }
+    }
+    return { save: sanitized, battleRepaired };
   } catch {
     console.warn("存档读取失败，将清除旧存档并开始新局");
     clearSave();

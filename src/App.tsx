@@ -29,6 +29,7 @@ import {
   loadGame,
   clearSave,
   SaveData,
+  LoadResult,
 } from "./config/saveSystem";
 
 const SIZE = GAME_CONSTANTS.boardSize;
@@ -118,7 +119,9 @@ function restoreCounters(history: TurnRecord[], battleLog: BattleLog[]): void {
   battleLogIdCounter = maxBattleLog;
 }
 
-const loadedSave: SaveData | null = loadGame();
+const loadResult: LoadResult | null = loadGame();
+const loadedSave: SaveData | null = loadResult?.save ?? null;
+const wasBattleRepaired: boolean = loadResult?.battleRepaired ?? false;
 
 function loadHighScore(): HighScore {
   try {
@@ -272,12 +275,15 @@ export default function App() {
   useEffect(() => {
     if (saveRestoredRef.current) {
       const restoredFloor = loadedSave!.floor;
+      const restoreEvent = wasBattleRepaired
+        ? "💾 已恢复存档（战斗状态异常已重置，可重新挑战该房间），继续探索！"
+        : "💾 已恢复上次存档，继续探索！";
       setHistory((prev) => [
         {
           id: ++recordIdCounter,
           turn: 0,
           floor: restoredFloor,
-          event: "💾 已恢复上次存档，继续探索！",
+          event: restoreEvent,
           hpDelta: 0,
           coinDelta: 0,
           items: [],
