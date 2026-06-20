@@ -2202,12 +2202,12 @@ button {
 .slot-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(2, 6, 23, 0.9);
-  backdrop-filter: blur(10px);
+  background: rgba(2, 6, 23, 0.92);
+  backdrop-filter: blur(12px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 160;
+  z-index: 250;
   padding: 20px;
   animation: fade-in 240ms ease-out;
 }
