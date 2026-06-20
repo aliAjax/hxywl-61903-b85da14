@@ -33,6 +33,12 @@ import {
   clearSave,
   SaveData,
   LoadResult,
+  saveGameToSlot,
+  loadGameFromSlot,
+  getSlotList,
+  deleteSlot,
+  SlotMeta,
+  MAX_SLOTS,
 } from "./config/saveSystem";
 
 const SIZE = GAME_CONSTANTS.boardSize;
@@ -390,6 +396,8 @@ export default function App() {
   const [playerCharging, setPlayerCharging] = useState(loadedSave?.playerCharging ?? false);
   const [currentRoute, setCurrentRoute] = useState<RouteType>(loadedSave?.currentRoute ?? null);
   const [showRouteSelect, setShowRouteSelect] = useState(false);
+  const [showSlotPanel, setShowSlotPanel] = useState<"save" | "load" | null>(null);
+  const [slotList, setSlotList] = useState<SlotMeta[]>(() => getSlotList());
 
   const saveRestoredRef = useRef(!!loadedSave);
   const frozenRouteHintRef = useRef<Set<number>>(new Set());
@@ -811,6 +819,112 @@ export default function App() {
       ...prev,
     ]);
   }, [floor]);
+
+  const handleSaveToSlot = useCallback((slot: number) => {
+    saveGameToSlot(slot, {
+      board,
+      hp,
+      coins,
+      keys,
+      potions,
+      floor,
+      status,
+      turn,
+      stats,
+      battleState,
+      currentMonster,
+      battleLog,
+      battleRoomIdx,
+      history,
+      showRouteHint,
+      playerCharging,
+      currentRoute,
+    });
+    setSlotList(getSlotList());
+    setShowSlotPanel(null);
+    setHistory((prev) => [
+      {
+        id: ++recordIdCounter,
+        turn,
+        floor,
+        event: `💾 已保存到槽位 ${slot}`,
+        hpDelta: 0,
+        coinDelta: 0,
+        items: [],
+      },
+      ...prev,
+    ]);
+  }, [board, hp, coins, keys, potions, floor, status, turn, stats, battleState, currentMonster, battleLog, battleRoomIdx, history, showRouteHint, playerCharging, currentRoute]);
+
+  const handleLoadFromSlot = useCallback((slot: number) => {
+    const result = loadGameFromSlot(slot);
+    if (!result) {
+      setHistory((prev) => [
+        {
+          id: ++recordIdCounter,
+          turn,
+          floor,
+          event: `❌ 槽位 ${slot} 存档无效或已损坏，无法读取`,
+          hpDelta: 0,
+          coinDelta: 0,
+          items: [],
+        },
+        ...prev,
+      ]);
+      setSlotList(getSlotList());
+      return;
+    }
+    const s = result.save;
+    restoreCounters(s.history, s.battleLog);
+    setBoard(s.board);
+    setHp(s.hp);
+    setCoins(s.coins);
+    setKeys(s.keys);
+    setPotions(s.potions);
+    setFloor(s.floor);
+    setStatus(s.status);
+    setTurn(s.turn);
+    setStats({
+      revealedRooms: s.stats.revealedRooms,
+      trapHits: s.stats.trapHits,
+      monstersDefeated: s.stats.monstersDefeated,
+      potionsUsed: s.stats.potionsUsed ?? 0,
+      fleeCount: s.stats.fleeCount ?? 0,
+    });
+    setBattleState(s.battleState);
+    setCurrentMonster(s.currentMonster);
+    setBattleLog(s.battleLog);
+    setBattleRoomIdx(s.battleRoomIdx);
+    setPlayerCharging(s.playerCharging ?? false);
+    setCurrentRoute(s.currentRoute ?? null);
+    setShowRouteHint(s.showRouteHint ?? false);
+    setHistory([
+      {
+        id: ++recordIdCounter,
+        turn: 0,
+        floor: s.floor,
+        event: result.battleRepaired
+          ? `💾 已从槽位 ${slot} 恢复（战斗状态异常已重置），继续探索！`
+          : `💾 已从槽位 ${slot} 恢复存档，继续探索！`,
+        hpDelta: 0,
+        coinDelta: 0,
+        items: [],
+      },
+      ...s.history,
+    ]);
+    setShowSlotPanel(null);
+    setSlotList(getSlotList());
+  }, [turn, floor]);
+
+  const handleDeleteSlot = useCallback((slot: number) => {
+    deleteSlot(slot);
+    setSlotList(getSlotList());
+  }, []);
+
+  const openSlotPanel = useCallback((mode: "save" | "load") => {
+    setSlotList(getSlotList());
+    setShowSlotPanel(mode);
+  }, []);
 
   const usePotion = useCallback(() => {
     if (status !== "playing") {
@@ -1365,6 +1479,19 @@ export default function App() {
               重新探索
             </button>
             <button
+              className="btn-save"
+              onClick={() => openSlotPanel("save")}
+              disabled={status !== "playing" || showSettlement || battleState !== "idle"}
+            >
+              💾 存档
+            </button>
+            <button
+              className="btn-load"
+              onClick={() => openSlotPanel("load")}
+            >
+              📂 读档
+            </button>
+            <button
               className={["btn-potion", !canUsePotion ? "btn-disabled" : ""].filter(Boolean).join(" ")}
               onClick={usePotion}
               disabled={!canUsePotion}
@@ -1716,6 +1843,109 @@ export default function App() {
               <button
                 className="btn-cancel-route"
                 onClick={() => setShowRouteSelect(false)}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSlotPanel && (
+        <div className="slot-overlay">
+          <div className="slot-modal">
+            <div className="slot-header">
+              <h2>{showSlotPanel === "save" ? "💾 保存游戏" : "📂 读取存档"}</h2>
+              <p>{showSlotPanel === "save" ? "选择一个槽位保存当前进度" : "选择一个槽位继续游戏"}</p>
+            </div>
+            <div className="slot-list">
+              {slotList.map((slot) => {
+                const isSaveMode = showSlotPanel === "save";
+                const isEmpty = slot.empty;
+                const isInvalid = !slot.empty && !slot.valid;
+                const routeCfg = slot.currentRoute ? ROUTE_CONFIGS[slot.currentRoute] : null;
+                return (
+                  <div
+                    key={slot.index}
+                    className={[
+                      "slot-card",
+                      isEmpty ? "slot-empty" : "",
+                      isInvalid ? "slot-invalid" : "",
+                      slot.battleState === "fighting" ? "slot-battle" : "",
+                    ].filter(Boolean).join(" ")}
+                  >
+                    <div className="slot-index">槽位 {slot.index}</div>
+                    {isEmpty ? (
+                      <div className="slot-info">
+                        <span className="slot-empty-text">空槽位</span>
+                      </div>
+                    ) : isInvalid ? (
+                      <div className="slot-info">
+                        <span className="slot-invalid-text">⚠️ 存档损坏</span>
+                        <span className="slot-reason">{slot.reason}</span>
+                      </div>
+                    ) : (
+                      <div className="slot-info">
+                        <span className="slot-detail">🏰 B{slot.floor}F</span>
+                        <span className="slot-detail">💰 {slot.coins}</span>
+                        <span className="slot-detail">❤️ {slot.hp}/{slot.maxHp}</span>
+                        {slot.battleState === "fighting" && (
+                          <span className="slot-battle-tag">⚔️ 战斗中</span>
+                        )}
+                        {routeCfg && (
+                          <span className="slot-route-tag">{routeCfg.icon} {routeCfg.name}</span>
+                        )}
+                      </div>
+                    )}
+                    {!isEmpty && slot.timestamp > 0 && (
+                      <div className="slot-time">
+                        {new Date(slot.timestamp).toLocaleString("zh-CN", {
+                          month: "2-digit",
+                          day: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                          second: "2-digit",
+                        })}
+                      </div>
+                    )}
+                    <div className="slot-actions">
+                      {isSaveMode ? (
+                        <button
+                          className="btn-slot-save"
+                          onClick={() => handleSaveToSlot(slot.index)}
+                        >
+                          {isEmpty ? "保存到此处" : "覆盖保存"}
+                        </button>
+                      ) : (
+                        <>
+                          {!isEmpty && (
+                            <>
+                              <button
+                                className="btn-slot-load"
+                                disabled={isInvalid}
+                                onClick={() => handleLoadFromSlot(slot.index)}
+                              >
+                                读取
+                              </button>
+                              <button
+                                className="btn-slot-delete"
+                                onClick={() => handleDeleteSlot(slot.index)}
+                              >
+                                删除
+                              </button>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="slot-footer">
+              <button
+                className="btn-cancel-slot"
+                onClick={() => setShowSlotPanel(null)}
               >
                 取消
               </button>

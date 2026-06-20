@@ -2,6 +2,8 @@ import { RoomType, Monster, GAME_CONSTANTS, RouteType } from "./gameConfig";
 
 export const SAVE_KEY = "dungeon-save-v1";
 export const CURRENT_SAVE_VERSION = 1;
+export const SLOT_KEY_PREFIX = "dungeon-slot-";
+export const MAX_SLOTS = 5;
 
 const VALID_ROOM_TYPES: Set<string> = new Set<RoomType>([
   "start", "coin", "trap", "monster", "key", "exit", "potion", "empty",
@@ -416,5 +418,119 @@ export function hasSave(): boolean {
     return localStorage.getItem(SAVE_KEY) !== null;
   } catch {
     return false;
+  }
+}
+
+export interface SlotMeta {
+  index: number;
+  empty: boolean;
+  floor: number;
+  coins: number;
+  hp: number;
+  maxHp: number;
+  timestamp: number;
+  battleState: "idle" | "fighting" | "won" | "lost" | "fled";
+  currentRoute: RouteType;
+  valid: boolean;
+  reason: string;
+}
+
+export function saveGameToSlot(slot: number, state: Omit<SaveData, "version" | "timestamp">): void {
+  try {
+    const data: SaveData = {
+      ...state,
+      version: CURRENT_SAVE_VERSION,
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(`${SLOT_KEY_PREFIX}${slot}`, JSON.stringify(data));
+  } catch {
+    /* ignore write failures */
+  }
+}
+
+export function loadGameFromSlot(slot: number): LoadResult | null {
+  try {
+    const raw = localStorage.getItem(`${SLOT_KEY_PREFIX}${slot}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const { valid, save, reason } = validateSaveData(parsed);
+    if (!valid) {
+      console.warn(`槽位${slot}存档验证失败: ${reason}`);
+      return null;
+    }
+    const { save: sanitized, battleRepaired } = sanitizeSave(save!);
+    if (sanitized.status === "lost") {
+      deleteSlot(slot);
+      return null;
+    }
+    if (battleRepaired) {
+      try {
+        localStorage.setItem(`${SLOT_KEY_PREFIX}${slot}`, JSON.stringify({
+          ...sanitized,
+          version: CURRENT_SAVE_VERSION,
+          timestamp: Date.now(),
+        }));
+      } catch {
+        /* ignore */
+      }
+    }
+    return { save: sanitized, battleRepaired };
+  } catch {
+    console.warn(`槽位${slot}存档读取失败`);
+    return null;
+  }
+}
+
+export function getSlotList(): SlotMeta[] {
+  const result: SlotMeta[] = [];
+  for (let i = 1; i <= MAX_SLOTS; i++) {
+    const meta: SlotMeta = {
+      index: i,
+      empty: true,
+      floor: 1,
+      coins: 0,
+      hp: 0,
+      maxHp: GAME_CONSTANTS.maxHp,
+      timestamp: 0,
+      battleState: "idle",
+      currentRoute: null,
+      valid: true,
+      reason: "",
+    };
+    try {
+      const raw = localStorage.getItem(`${SLOT_KEY_PREFIX}${i}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const { valid, save, reason } = validateSaveData(parsed);
+        meta.empty = false;
+        if (valid && save) {
+          meta.floor = save.floor;
+          meta.coins = save.coins;
+          meta.hp = save.hp;
+          meta.maxHp = GAME_CONSTANTS.maxHp;
+          meta.timestamp = save.timestamp;
+          meta.battleState = save.battleState;
+          meta.currentRoute = save.currentRoute ?? null;
+          meta.valid = true;
+        } else {
+          meta.valid = false;
+          meta.reason = reason;
+        }
+      }
+    } catch {
+      meta.empty = false;
+      meta.valid = false;
+      meta.reason = "存档数据损坏";
+    }
+    result.push(meta);
+  }
+  return result;
+}
+
+export function deleteSlot(slot: number): void {
+  try {
+    localStorage.removeItem(`${SLOT_KEY_PREFIX}${slot}`);
+  } catch {
+    /* ignore */
   }
 }
