@@ -63,6 +63,7 @@ export interface SaveData {
   battleLog: SavedBattleLog[];
   battleRoomIdx: number;
   history: SavedTurnRecord[];
+  showRouteHint?: boolean;
 }
 
 export interface LoadResult {

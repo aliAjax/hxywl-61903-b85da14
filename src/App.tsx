@@ -296,8 +296,10 @@ export default function App() {
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [revealAllRooms, setRevealAllRooms] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
+  const [showRouteHint, setShowRouteHint] = useState(loadedSave?.showRouteHint ?? false);
 
   const saveRestoredRef = useRef(!!loadedSave);
+  const frozenRouteHintRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     if (saveRestoredRef.current) {
@@ -338,8 +340,9 @@ export default function App() {
       battleLog,
       battleRoomIdx,
       history,
+      showRouteHint,
     });
-  }, [board, hp, coins, keys, potions, floor, status, turn, stats, battleState, currentMonster, battleLog, battleRoomIdx, history, showSettlement]);
+  }, [board, hp, coins, keys, potions, floor, status, turn, stats, battleState, currentMonster, battleLog, battleRoomIdx, history, showSettlement, showRouteHint]);
 
   const flippable = useMemo(() => {
     if (battleState !== "idle") return new Set<number>();
@@ -353,6 +356,29 @@ export default function App() {
     }
     return set;
   }, [board, battleState]);
+
+  const safeRouteHintCells = useMemo(() => {
+    const set = new Set<number>();
+    for (let i = 0; i < TOTAL; i++) {
+      if (board[i].revealed) {
+        for (const n of getNeighbors(i)) {
+          if (!board[n].revealed) {
+            const t = board[n].type;
+            if (t !== "trap" && t !== "monster") {
+              set.add(n);
+            }
+          }
+        }
+      }
+    }
+    return set;
+  }, [board]);
+
+  useEffect(() => {
+    if (battleState === "idle" && !showSettlement) {
+      frozenRouteHintRef.current = new Set(safeRouteHintCells);
+    }
+  }, [safeRouteHintCells, battleState, showSettlement]);
 
   const exitRevealed = useMemo(
     () => board.some((r: Room) => r.type === "exit" && r.revealed),
@@ -1062,6 +1088,11 @@ export default function App() {
         <div className="board">
           {displayBoard.map((room: Room, idx: number) => {
             const isFlippable = flippable.has(idx) && !room.revealed;
+            const hintCells = battleState !== "idle" || showSettlement
+              ? frozenRouteHintRef.current
+              : safeRouteHintCells;
+            const isRouteHint = showRouteHint && hintCells.has(idx) && !room.revealed;
+            const showFlippableHighlight = isFlippable && !showRouteHint;
             const canClickExit =
               room.revealed && room.type === "exit" && keys > 0 && canFlip;
             const isDefeated = room.type === "monster" && room.defeated;
@@ -1073,7 +1104,8 @@ export default function App() {
                   "cell",
                   room.type,
                   room.revealed ? "revealed" : "",
-                  isFlippable ? "flippable" : "",
+                  showFlippableHighlight ? "flippable" : "",
+                  isRouteHint ? "route-hint" : "",
                   canClickExit ? "can-exit" : "",
                   isDefeated ? "defeated" : "",
                   isDisabled ? "disabled" : "",
@@ -1118,6 +1150,20 @@ export default function App() {
               <span>药水 {floorCfg.potionCt}</span>
               <span>金币 {floorCfg.coinMin}~{floorCfg.coinMax}/堆</span>
             </div>
+          </div>
+          <div className="route-hint-toggle">
+            <label className="toggle-label">
+              <span className="toggle-icon">🧭</span>
+              <span className="toggle-text">路线提示</span>
+              <span className="toggle-desc">仅高亮安全方向</span>
+              <button
+                type="button"
+                className={`toggle-switch ${showRouteHint ? "toggle-on" : "toggle-off"}`}
+                onClick={() => setShowRouteHint((prev) => !prev)}
+              >
+                <span className="toggle-knob" />
+              </button>
+            </label>
           </div>
           <div className="actions">
             <button
