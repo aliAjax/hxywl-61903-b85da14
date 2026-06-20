@@ -16,6 +16,9 @@ import {
   shuffle,
   getNeighbors,
   getTotalCells,
+  RouteType,
+  ROUTE_CONFIGS,
+  RouteConfig,
 } from "./config/gameConfig";
 import {
   generateMap,
@@ -114,8 +117,8 @@ const SYMBOLS: Record<RoomType, string> = {
   empty: getSymbol("empty"),
 };
 
-function generateBoard(floor: number = 1): Room[] {
-  const result = generateMap(floor);
+function generateBoard(floor: number = 1, route: RouteType = null): Room[] {
+  const result = generateMap(floor, route);
   lastGenResult = result;
   return result.rooms.map((t) => ({ type: t, revealed: t === "start" }));
 }
@@ -385,6 +388,8 @@ export default function App() {
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
   const [showRouteHint, setShowRouteHint] = useState(loadedSave?.showRouteHint ?? false);
   const [playerCharging, setPlayerCharging] = useState(loadedSave?.playerCharging ?? false);
+  const [currentRoute, setCurrentRoute] = useState<RouteType>(loadedSave?.currentRoute ?? null);
+  const [showRouteSelect, setShowRouteSelect] = useState(false);
 
   const saveRestoredRef = useRef(!!loadedSave);
   const frozenRouteHintRef = useRef<Set<number>>(new Set());
@@ -430,8 +435,9 @@ export default function App() {
       history,
       showRouteHint,
       playerCharging,
+      currentRoute,
     });
-  }, [board, hp, coins, keys, potions, floor, status, turn, stats, battleState, currentMonster, battleLog, battleRoomIdx, history, showSettlement, showRouteHint, playerCharging]);
+  }, [board, hp, coins, keys, potions, floor, status, turn, stats, battleState, currentMonster, battleLog, battleRoomIdx, history, showSettlement, showRouteHint, playerCharging, currentRoute]);
 
   const flippable = useMemo(() => {
     if (battleState !== "idle") return new Set<number>();
@@ -542,7 +548,7 @@ export default function App() {
       const newStats: GameStats = { ...stats, revealedRooms: stats.revealedRooms + 1 };
 
       if (room.type === "monster") {
-        const monster = generateMonster(floor);
+        const monster = generateMonster(floor, currentRoute);
         setBoard((prev: Room[]) =>
           prev.map((r: Room, i: number) => (i === idx ? { ...r, revealed: true } : r))
         );
@@ -605,7 +611,7 @@ export default function App() {
           }, 100);
         }
       } else if (room.type === "coin") {
-        const gain = getCoinReward(floor);
+        const gain = getCoinReward(floor, currentRoute);
         newCoins = coins + gain;
         records.push({
           id: ++recordIdCounter,
@@ -720,7 +726,7 @@ export default function App() {
   const doResetGame = useCallback(() => {
     clearSave();
     const newFloor = 1;
-    setBoard(generateBoard(newFloor));
+    setBoard(generateBoard(newFloor, null));
     setHp(MAX_HP);
     setCoins(0);
     setKeys(0);
@@ -738,6 +744,8 @@ export default function App() {
     setBattleLog([]);
     setBattleRoomIdx(-1);
     setPlayerCharging(false);
+    setCurrentRoute(null);
+    setShowRouteSelect(false);
     setHistory([
       {
         id: ++recordIdCounter,
@@ -752,9 +760,14 @@ export default function App() {
   }, []);
 
   const nextFloor = useCallback(() => {
+    setShowRouteSelect(true);
+  }, []);
+
+  const confirmRouteAndNextFloor = useCallback((route: RouteType) => {
     const newFloor = floor + 1;
-    const nextCfg = getFloorConfig(newFloor);
-    setBoard(generateBoard(newFloor));
+    const nextCfg = getFloorConfig(newFloor, route);
+    const routeCfg = route ? ROUTE_CONFIGS[route] : null;
+    setBoard(generateBoard(newFloor, route));
     setFloor(newFloor);
     setKeys(0);
     setStatus("playing");
@@ -764,15 +777,36 @@ export default function App() {
     setBattleLog([]);
     setBattleRoomIdx(-1);
     setPlayerCharging(false);
+    setCurrentRoute(route);
+    setShowRouteSelect(false);
+
+    let routeMessage = "";
+    if (routeCfg) {
+      const effects: string[] = [];
+      if (routeCfg.potionModifier !== 0) {
+        effects.push(`药水${routeCfg.potionModifier > 0 ? "+" : ""}${routeCfg.potionModifier}`);
+      }
+      if (routeCfg.coinMultiplier !== 1) {
+        effects.push(`金币×${routeCfg.coinMultiplier}`);
+      }
+      if (routeCfg.monsterStrengthMultiplier !== 1) {
+        effects.push(`怪物强度×${routeCfg.monsterStrengthMultiplier}`);
+      }
+      if (routeCfg.pathDamageModifier !== 0) {
+        effects.push(`路径上限${routeCfg.pathDamageModifier > 0 ? "+" : ""}${routeCfg.pathDamageModifier}`);
+      }
+      routeMessage = `选择了「${routeCfg.icon} ${routeCfg.name}」路线（${effects.join("，")}）。`;
+    }
+
     setHistory((prev: TurnRecord[]) => [
       {
         id: ++recordIdCounter,
         turn: 0,
         floor: newFloor,
-        event: `⬆️ 进入B${newFloor}F！陷阱+${nextCfg.trapCt}、怪物+${nextCfg.monsterCt}、金币奖励范围${nextCfg.coinMin}~${nextCfg.coinMax}，请谨慎探索`,
+        event: `⬆️ ${routeMessage}进入B${newFloor}F！陷阱+${nextCfg.trapCt}、怪物+${nextCfg.monsterCt}、金币奖励范围${nextCfg.coinMin}~${nextCfg.coinMax}，请谨慎探索`,
         hpDelta: 0,
         coinDelta: 0,
-        items: [],
+        items: routeCfg ? [`${routeCfg.icon} ${routeCfg.name}路线`] : [],
       },
       ...prev,
     ]);
@@ -1137,7 +1171,7 @@ export default function App() {
   }, []);
 
   const verifyCurrentMap = useCallback(() => {
-    const cfg = getFloorConfig(floor);
+    const cfg = getFloorConfig(floor, currentRoute);
     const roomTypes = board.map((r) => r.type);
     const result = verifyMap(roomTypes, cfg.pathMaxDamage);
     addDebugLog(`验证结果: ${result.valid ? "✅ 通过" : "❌ 失败"}`);
@@ -1145,7 +1179,7 @@ export default function App() {
       result.issues.forEach((issue) => addDebugLog(`  - ${issue}`));
     }
     addDebugLog(`路径伤害: 起点→钥匙=${result.safePath ? "有" : "无"}`);
-  }, [board, floor, addDebugLog]);
+  }, [board, floor, currentRoute, addDebugLog]);
 
   const printDebugMap = useCallback(() => {
     const roomTypes = board.map((r) => r.type);
@@ -1156,7 +1190,7 @@ export default function App() {
 
   const runDiagnostics = useCallback(() => {
     addDebugLog("开始运行生成诊断（100次迭代）...");
-    const diag = runGenerationDiagnostics(floor, 100);
+    const diag = runGenerationDiagnostics(floor, 100, currentRoute);
     addDebugLog(`成功率: ${(diag.successRate * 100).toFixed(1)}%`);
     addDebugLog(`平均尝试次数: ${diag.avgAttempts.toFixed(2)}`);
     addDebugLog(`平均路径伤害: ${diag.avgPathDamage.toFixed(2)}`);
@@ -1167,13 +1201,13 @@ export default function App() {
         addDebugLog(`  - ${issue}: ${count}次`);
       });
     }
-  }, [floor, addDebugLog]);
+  }, [floor, currentRoute, addDebugLog]);
 
   const regenMap = useCallback(() => {
-    const newBoard = generateBoard(floor);
+    const newBoard = generateBoard(floor, currentRoute);
     setBoard(newBoard);
     addDebugLog(`重新生成地图 (B${floor}F)`);
-  }, [floor, addDebugLog]);
+  }, [floor, currentRoute, addDebugLog]);
 
   const toggleRevealAll = useCallback(() => {
     setRevealAllRooms((prev) => !prev);
@@ -1198,7 +1232,8 @@ export default function App() {
     [history, historyFilter, activeFilter]
   );
 
-  const floorCfg: FloorConfig = getFloorConfig(floor);
+  const floorCfg: FloorConfig = getFloorConfig(floor, currentRoute);
+  const currentRouteCfg: RouteConfig | null = currentRoute ? ROUTE_CONFIGS[currentRoute] : null;
 
   return (
     <main className="game-shell">
@@ -1292,6 +1327,13 @@ export default function App() {
           </div>
           <div className="floor-info">
             <small>B{floor}F 难度配置</small>
+            {currentRouteCfg && (
+              <div className="current-route">
+                <span className="route-badge">
+                  {currentRouteCfg.icon} {currentRouteCfg.name}路线
+                </span>
+              </div>
+            )}
             <div className="floor-config">
               <span>陷阱 {floorCfg.trapCt}</span>
               <span>怪物 {floorCfg.monsterCt}</span>
@@ -1419,16 +1461,21 @@ export default function App() {
         <div className="result-header">
           <h2>🎯 本局进度</h2>
           <div className="high-score-tags">
+            {currentRouteCfg && (
+              <span className="hs-tag route-tag">
+                {currentRouteCfg.icon} {currentRouteCfg.name}路线
+              </span>
+            )}
             <span className="hs-tag">🏆 历史最高 B{highScore.maxFloor}F</span>
             <span className="hs-tag">💰 历史最多 {highScore.maxCoins} 金币</span>
           </div>
         </div>
         <p>
           {status === "won"
-            ? `🎉 恭喜通关B${floor}F！累计获得${coins}💰金币，当前血量${hp}/${MAX_HP}❤️，剩余${potions}瓶🧪药水。点击「进入下一层」继续向B${floor + 1}F深入，届时将有更多陷阱和怪物，但金币奖励也会更丰厚！`
+            ? `🎉 恭喜通关B${floor}F！累计获得${coins}💰金币，当前血量${hp}/${MAX_HP}❤️，剩余${potions}瓶🧪药水。点击「进入下一层」选择探险路线，继续向B${floor + 1}F深入！`
             : status === "lost"
               ? `💀 探索失败，在B${floor}F血量归零。共获得${coins}💰金币，到达B${floor}F。点击「重新探索」从B1F再次挑战！`
-              : `正在探索B${floor}F，血量${hp}/${MAX_HP}❤️，金币${coins}💰，药水${potions}🧪，${keys > 0 ? "已持有钥匙🔑，赶快找到出口🚪！" : "尚未找到钥匙🔑，继续翻开相邻房间小心前进！"}本层有${floorCfg.trapCt}个陷阱⚡和${floorCfg.monsterCt}只怪物👹，谨慎行动！`}
+              : `正在探索B${floor}F${currentRouteCfg ? `（${currentRouteCfg.icon}${currentRouteCfg.name}路线）` : ""}，血量${hp}/${MAX_HP}❤️，金币${coins}💰，药水${potions}🧪，${keys > 0 ? "已持有钥匙🔑，赶快找到出口🚪！" : "尚未找到钥匙🔑，继续翻开相邻房间小心前进！"}本层有${floorCfg.trapCt}个陷阱⚡和${floorCfg.monsterCt}只怪物👹，谨慎行动！`}
         </p>
       </section>
 
@@ -1633,6 +1680,50 @@ export default function App() {
         </div>
       )}
 
+      {showRouteSelect && (
+        <div className="route-select-overlay">
+          <div className="route-select-modal">
+            <div className="route-select-header">
+              <h2>🗺️ 选择探险路线</h2>
+              <p>即将进入 B{floor + 1}F，请选择你的探险策略</p>
+            </div>
+            <div className="route-options">
+              {Object.values(ROUTE_CONFIGS).map((route) => {
+                const nextCfg = getFloorConfig(floor + 1, route.key);
+                return (
+                  <button
+                    key={route.key}
+                    className={`route-option route-${route.key}`}
+                    onClick={() => confirmRouteAndNextFloor(route.key)}
+                  >
+                    <div className="route-icon">{route.icon}</div>
+                    <div className="route-name">{route.name}</div>
+                    <div className="route-description">{route.description}</div>
+                    <div className="route-preview">
+                      <small>下一层预览：</small>
+                      <div className="route-preview-stats">
+                        <span>🧪 {nextCfg.potionCt}</span>
+                        <span>💰 {nextCfg.coinMin}~{nextCfg.coinMax}</span>
+                        <span>👹 ×{route.monsterStrengthMultiplier}</span>
+                        <span>⚡ 上限{nextCfg.pathMaxDamage}</span>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="route-select-footer">
+              <button
+                className="btn-cancel-route"
+                onClick={() => setShowRouteSelect(false)}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <button
         className="debug-toggle"
         onClick={() => setShowDebugPanel((prev) => !prev)}
@@ -1657,6 +1748,7 @@ export default function App() {
           </div>
           <div className="debug-stats">
             <div>当前楼层: B{floor}F</div>
+            <div>当前路线: {currentRouteCfg ? `${currentRouteCfg.icon} ${currentRouteCfg.name}` : "无"}</div>
             <div>路径上限: {floorCfg.pathMaxDamage} 伤害</div>
           </div>
           <div className="debug-log">

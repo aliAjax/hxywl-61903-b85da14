@@ -1,4 +1,4 @@
-import { RoomType, Monster, GAME_CONSTANTS } from "./gameConfig";
+import { RoomType, Monster, GAME_CONSTANTS, RouteType } from "./gameConfig";
 
 export const SAVE_KEY = "dungeon-save-v1";
 export const CURRENT_SAVE_VERSION = 1;
@@ -67,6 +67,7 @@ export interface SaveData {
   history: SavedTurnRecord[];
   showRouteHint?: boolean;
   playerCharging?: boolean;
+  currentRoute?: RouteType;
 }
 
 export interface LoadResult {
@@ -191,6 +192,11 @@ export function validateSaveData(data: unknown): { valid: boolean; save: SaveDat
 
   if (data.playerCharging !== undefined && typeof data.playerCharging !== "boolean") {
     return { valid: false, save: null, reason: "蓄力状态数据异常" };
+  }
+
+  const validRoutes = ["safe", "greedy", "dangerous", null, undefined];
+  if (data.currentRoute !== undefined && !validRoutes.includes(data.currentRoute as RouteType)) {
+    return { valid: false, save: null, reason: "路线数据异常" };
   }
 
   const expectedCells = GAME_CONSTANTS.boardSize * GAME_CONSTANTS.boardSize;

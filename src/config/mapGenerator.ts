@@ -7,6 +7,7 @@ import {
   getNeighbors,
   getTotalCells,
   GAME_CONSTANTS,
+  RouteType,
 } from "./gameConfig";
 
 export interface GenerationResult {
@@ -237,8 +238,8 @@ export function verifyMap(rooms: RoomType[], maxPathDamage: number): Verificatio
   };
 }
 
-function generateSafeCorridor(floor: number): RoomType[] {
-  const cfg = getFloorConfig(floor);
+function generateSafeCorridor(floor: number, route: RouteType = null): RoomType[] {
+  const cfg = getFloorConfig(floor, route);
   const rooms: RoomType[] = new Array<RoomType>(TOTAL).fill("empty");
   rooms[START_IDX] = "start";
   const farPositions = Array.from({ length: TOTAL }, (_, i) => i)
@@ -301,8 +302,8 @@ function generateSafeCorridor(floor: number): RoomType[] {
   return rooms;
 }
 
-function mixupRooms(rooms: RoomType[], floor: number): RoomType[] {
-  const cfg = getFloorConfig(floor);
+function mixupRooms(rooms: RoomType[], floor: number, route: RouteType = null): RoomType[] {
+  const cfg = getFloorConfig(floor, route);
   const result = [...rooms];
   const keyIdx = result.indexOf("key");
   const exitIdx = result.indexOf("exit");
@@ -320,15 +321,15 @@ function mixupRooms(rooms: RoomType[], floor: number): RoomType[] {
   return result;
 }
 
-export function generateMap(floor: number = 1): GenerationResult {
-  const cfg = getFloorConfig(floor);
+export function generateMap(floor: number = 1, route: RouteType = null): GenerationResult {
+  const cfg = getFloorConfig(floor, route);
   let bestResult: GenerationResult | null = null;
   let bestDamage = Infinity;
   const maxAttempts = 50;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    let rooms = generateSafeCorridor(floor);
+    let rooms = generateSafeCorridor(floor, route);
     if (attempt > 5) {
-      rooms = mixupRooms(rooms, floor);
+      rooms = mixupRooms(rooms, floor, route);
     }
     const verification = verifyMap(rooms, cfg.pathMaxDamage);
     const { damage: keyDmg } = dijkstraMinDamage(rooms, START_IDX, rooms.indexOf("key"));
@@ -356,12 +357,12 @@ export function generateMap(floor: number = 1): GenerationResult {
   if (bestResult) {
     return bestResult;
   }
-  const fallback = generateFallbackMap(floor);
+  const fallback = generateFallbackMap(floor, route);
   return fallback;
 }
 
-function generateFallbackMap(floor: number): GenerationResult {
-  const cfg = getFloorConfig(floor);
+function generateFallbackMap(floor: number, route: RouteType = null): GenerationResult {
+  const cfg = getFloorConfig(floor, route);
   const rooms: RoomType[] = new Array<RoomType>(TOTAL).fill("empty");
   rooms[0] = "start";
   rooms[12] = "key";
@@ -441,7 +442,8 @@ export function printMapDebug(
 
 export function runGenerationDiagnostics(
   floor: number,
-  iterations: number = 100
+  iterations: number = 100,
+  route: RouteType = null
 ): {
   successRate: number;
   avgAttempts: number;
@@ -457,7 +459,7 @@ export function runGenerationDiagnostics(
   let maxDmg = -Infinity;
   const issues: Record<string, number> = {};
   for (let i = 0; i < iterations; i++) {
-    const result = generateMap(floor);
+    const result = generateMap(floor, route);
     totalAttempts += result.stats.attempts;
     totalDamage += result.stats.totalPathDamage;
     minDmg = Math.min(minDmg, result.stats.totalPathDamage);

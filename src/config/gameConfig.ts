@@ -1,5 +1,18 @@
 export type RoomType = "start" | "coin" | "trap" | "monster" | "key" | "exit" | "potion" | "empty";
 
+export type RouteType = "safe" | "greedy" | "dangerous" | null;
+
+export interface RouteConfig {
+  key: RouteType;
+  name: string;
+  icon: string;
+  description: string;
+  potionModifier: number;
+  coinMultiplier: number;
+  monsterStrengthMultiplier: number;
+  pathDamageModifier: number;
+}
+
 export interface GameConstants {
   boardSize: number;
   maxHp: number;
@@ -117,6 +130,39 @@ export interface EventMessages {
   playerChargeLog: string;
   playerChargeReleaseLog: (multiplier: number) => string;
 }
+
+export const ROUTE_CONFIGS: Record<Exclude<RouteType, null>, RouteConfig> = {
+  safe: {
+    key: "safe",
+    name: "稳妥",
+    icon: "🛡️",
+    description: "谨慎前进，补给充足但收益较少。药水+2，怪物-20%，金币-20%，路径上限+3",
+    potionModifier: 2,
+    coinMultiplier: 0.8,
+    monsterStrengthMultiplier: 0.8,
+    pathDamageModifier: 3,
+  },
+  greedy: {
+    key: "greedy",
+    name: "贪婪",
+    icon: "💎",
+    description: "追求财富，高风险高回报。药水-1，金币+50%，怪物+10%，路径上限-1",
+    potionModifier: -1,
+    coinMultiplier: 1.5,
+    monsterStrengthMultiplier: 1.1,
+    pathDamageModifier: -1,
+  },
+  dangerous: {
+    key: "dangerous",
+    name: "危险",
+    icon: "🔥",
+    description: "孤注一掷，奖励丰厚但极度危险。药水-2，金币+80%，怪物+40%，路径上限-3",
+    potionModifier: -2,
+    coinMultiplier: 1.8,
+    monsterStrengthMultiplier: 1.4,
+    pathDamageModifier: -3,
+  },
+};
 
 export const GAME_CONSTANTS: GameConstants = {
   boardSize: 5,
@@ -241,44 +287,67 @@ export function calcFloorCount(rule: FloorCountRule, floor: number): number {
   return Math.min(result, rule.cap);
 }
 
-export function getFloorConfig(floor: number): FloorConfig {
+export function getFloorConfig(floor: number, route: RouteType = null): FloorConfig {
   const coinCt = calcFloorCount(FLOOR_COUNT_RULES.coin, floor);
   const trapCt = calcFloorCount(FLOOR_COUNT_RULES.trap, floor);
   const monsterCt = calcFloorCount(FLOOR_COUNT_RULES.monster, floor);
-  const potionCt = calcFloorCount(FLOOR_COUNT_RULES.potion, floor);
+  let potionCt = calcFloorCount(FLOOR_COUNT_RULES.potion, floor);
   const keyCt = calcFloorCount(FLOOR_COUNT_RULES.key, floor);
   const exitCt = calcFloorCount(FLOOR_COUNT_RULES.exit, floor);
 
   const lv = Math.min(floor, 10);
-  const coinMin = FLOOR_COIN_RULE.minBase + Math.floor((lv - 1) / FLOOR_COIN_RULE.growthInterval) * FLOOR_COIN_RULE.minGrowth;
-  const coinMax = FLOOR_COIN_RULE.maxBase + Math.floor(lv / FLOOR_COIN_RULE.growthInterval) * FLOOR_COIN_RULE.maxGrowth;
-  const pathMaxDamage =
+  let coinMin = FLOOR_COIN_RULE.minBase + Math.floor((lv - 1) / FLOOR_COIN_RULE.growthInterval) * FLOOR_COIN_RULE.minGrowth;
+  let coinMax = FLOOR_COIN_RULE.maxBase + Math.floor(lv / FLOOR_COIN_RULE.growthInterval) * FLOOR_COIN_RULE.maxGrowth;
+  let pathMaxDamage =
     FLOOR_PATH_RULE.baseDamage + Math.floor((lv - 1) / FLOOR_PATH_RULE.growthInterval) * FLOOR_PATH_RULE.growth;
+
+  if (route && ROUTE_CONFIGS[route]) {
+    const cfg = ROUTE_CONFIGS[route];
+    potionCt = Math.max(0, potionCt + cfg.potionModifier);
+    coinMin = Math.max(1, Math.round(coinMin * cfg.coinMultiplier));
+    coinMax = Math.max(coinMin, Math.round(coinMax * cfg.coinMultiplier));
+    pathMaxDamage = Math.max(2, pathMaxDamage + cfg.pathDamageModifier);
+  }
 
   return { coinCt, trapCt, monsterCt, potionCt, keyCt, exitCt, coinMin, coinMax, pathMaxDamage };
 }
 
-export function generateMonster(floor: number): Monster {
+export function generateMonster(floor: number, route: RouteType = null): Monster {
   const lv = Math.min(floor, MONSTER_TEMPLATES[MONSTER_TEMPLATES.length - 1].unlockFloor);
   const available = MONSTER_TEMPLATES.filter((t) => t.unlockFloor <= lv);
   const template = available[Math.floor(Math.random() * available.length)];
   const hpBonus = Math.floor((lv - 1) / MONSTER_GROWTH.hpBonusInterval);
   const atkBonus = Math.floor((lv - 1) / MONSTER_GROWTH.atkBonusInterval);
   const coinBonus = Math.floor((lv - 1) / MONSTER_GROWTH.coinBonusInterval);
-  const maxHp = template.baseHp + hpBonus + Math.floor(Math.random() * MONSTER_GROWTH.hpRandomRange);
+
+  let strengthMultiplier = 1;
+  let coinMultiplier = 1;
+  if (route && ROUTE_CONFIGS[route]) {
+    strengthMultiplier = ROUTE_CONFIGS[route].monsterStrengthMultiplier;
+    coinMultiplier = ROUTE_CONFIGS[route].coinMultiplier;
+  }
+
+  const baseMaxHp = template.baseHp + hpBonus + Math.floor(Math.random() * MONSTER_GROWTH.hpRandomRange);
+  const baseAttack = template.baseAtk + atkBonus;
+  const baseCoinReward = template.coinBase + coinBonus + Math.floor(Math.random() * MONSTER_GROWTH.coinRandomRange);
+
+  const maxHp = Math.max(1, Math.round(baseMaxHp * strengthMultiplier));
+  const attack = Math.max(1, Math.round(baseAttack * strengthMultiplier));
+  const coinReward = Math.max(1, Math.round(baseCoinReward * coinMultiplier));
+
   return {
     name: template.name,
     icon: template.icon,
     maxHp,
     hp: maxHp,
-    attack: template.baseAtk + atkBonus,
-    coinReward: template.coinBase + coinBonus + Math.floor(Math.random() * MONSTER_GROWTH.coinRandomRange),
+    attack,
+    coinReward,
     potionDropChance: template.potionChance,
   };
 }
 
-export function getCoinReward(floor: number): number {
-  const cfg = getFloorConfig(floor);
+export function getCoinReward(floor: number, route: RouteType = null): number {
+  const cfg = getFloorConfig(floor, route);
   return cfg.coinMin + Math.floor(Math.random() * (cfg.coinMax - cfg.coinMin + 1));
 }
 
