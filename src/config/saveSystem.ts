@@ -75,6 +75,8 @@ export interface SaveData {
 export interface LoadResult {
   save: SaveData;
   battleRepaired: boolean;
+  battleWasLoaded: boolean;
+  battleStateWasInconsistent: boolean;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -259,40 +261,46 @@ function resetBattleRoom(save: SaveData): void {
   }
 }
 
-export function sanitizeSave(save: SaveData): { save: SaveData; battleRepaired: boolean } {
+export function sanitizeSave(save: SaveData): { save: SaveData; battleRepaired: boolean; battleWasLoaded: boolean; battleStateWasInconsistent: boolean } {
   const repaired = { ...save, board: save.board.map((r) => ({ ...r })) };
   let battleRepaired = false;
+  const battleWasLoaded = repaired.battleState !== "idle";
+  let battleStateWasInconsistent = false;
 
   if (repaired.battleState === "idle") {
     if (repaired.currentMonster !== null || repaired.battleRoomIdx !== -1) {
       resetBattleState(repaired);
       battleRepaired = true;
     }
-    return { save: repaired, battleRepaired };
+    return { save: repaired, battleRepaired, battleWasLoaded, battleStateWasInconsistent };
   }
 
   if (repaired.status === "lost") {
+    battleStateWasInconsistent = true;
     resetBattleState(repaired);
-    return { save: repaired, battleRepaired: false };
+    return { save: repaired, battleRepaired: false, battleWasLoaded, battleStateWasInconsistent };
   }
 
   if (repaired.hp <= 0) {
+    battleStateWasInconsistent = true;
     repaired.status = "lost";
     resetBattleState(repaired);
-    return { save: repaired, battleRepaired: true };
+    return { save: repaired, battleRepaired: true, battleWasLoaded, battleStateWasInconsistent };
   }
 
   if (repaired.status === "won" && repaired.battleState === "fighting") {
+    battleStateWasInconsistent = true;
     resetBattleRoom(repaired);
     resetBattleState(repaired);
     battleRepaired = true;
-    return { save: repaired, battleRepaired };
+    return { save: repaired, battleRepaired, battleWasLoaded, battleStateWasInconsistent };
   }
 
   if (repaired.battleState === "won" || repaired.battleState === "lost" || repaired.battleState === "fled") {
     if (repaired.battleState === "won") {
       if (repaired.battleRoomIdx >= 0 && repaired.battleRoomIdx < repaired.board.length) {
         if (!repaired.board[repaired.battleRoomIdx].defeated) {
+          battleStateWasInconsistent = true;
           repaired.board[repaired.battleRoomIdx] = {
             ...repaired.board[repaired.battleRoomIdx],
             defeated: true,
@@ -305,6 +313,7 @@ export function sanitizeSave(save: SaveData): { save: SaveData; battleRepaired: 
     if (repaired.battleState === "fled") {
       if (repaired.battleRoomIdx >= 0 && repaired.battleRoomIdx < repaired.board.length) {
         if (repaired.board[repaired.battleRoomIdx].revealed) {
+          battleStateWasInconsistent = true;
           repaired.board[repaired.battleRoomIdx] = {
             ...repaired.board[repaired.battleRoomIdx],
             revealed: false,
@@ -315,16 +324,19 @@ export function sanitizeSave(save: SaveData): { save: SaveData; battleRepaired: 
       }
     }
     if (repaired.battleState === "lost") {
+      battleStateWasInconsistent = true;
       resetBattleState(repaired);
-      return { save: repaired, battleRepaired: true };
+      return { save: repaired, battleRepaired: true, battleWasLoaded, battleStateWasInconsistent };
     }
+    battleStateWasInconsistent = true;
     resetBattleState(repaired);
-    return { save: repaired, battleRepaired };
+    return { save: repaired, battleRepaired, battleWasLoaded, battleStateWasInconsistent };
   }
 
   if (repaired.battleState === "fighting") {
     const needsRepair = !isFightingStateConsistent(repaired);
     if (needsRepair) {
+      battleStateWasInconsistent = true;
       console.warn("战斗存档状态不一致，将重置战斗并恢复房间为未翻开状态");
       resetBattleRoom(repaired);
       resetBattleState(repaired);
@@ -334,7 +346,7 @@ export function sanitizeSave(save: SaveData): { save: SaveData; battleRepaired: 
     }
   }
 
-  return { save: repaired, battleRepaired };
+  return { save: repaired, battleRepaired, battleWasLoaded, battleStateWasInconsistent };
 }
 
 function isFightingStateConsistent(save: SaveData): boolean {
@@ -381,7 +393,7 @@ export function loadGame(): LoadResult | null {
       clearSave();
       return null;
     }
-    const { save: sanitized, battleRepaired } = sanitizeSave(save!);
+    const { save: sanitized, battleRepaired, battleWasLoaded, battleStateWasInconsistent } = sanitizeSave(save!);
     if (sanitized.status === "lost") {
       clearSave();
       return null;
@@ -397,7 +409,7 @@ export function loadGame(): LoadResult | null {
         /* ignore */
       }
     }
-    return { save: sanitized, battleRepaired };
+    return { save: sanitized, battleRepaired, battleWasLoaded, battleStateWasInconsistent };
   } catch {
     console.warn("存档读取失败，将清除旧存档并开始新局");
     clearSave();
@@ -458,7 +470,7 @@ export function loadGameFromSlot(slot: number): LoadResult | null {
       console.warn(`槽位${slot}存档验证失败: ${reason}`);
       return null;
     }
-    const { save: sanitized, battleRepaired } = sanitizeSave(save!);
+    const { save: sanitized, battleRepaired, battleWasLoaded, battleStateWasInconsistent } = sanitizeSave(save!);
     if (sanitized.status === "lost") {
       deleteSlot(slot);
       return null;
@@ -474,7 +486,7 @@ export function loadGameFromSlot(slot: number): LoadResult | null {
         /* ignore */
       }
     }
-    return { save: sanitized, battleRepaired };
+    return { save: sanitized, battleRepaired, battleWasLoaded, battleStateWasInconsistent };
   } catch {
     console.warn(`槽位${slot}存档读取失败`);
     return null;

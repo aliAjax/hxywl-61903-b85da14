@@ -159,6 +159,7 @@ function restoreCounters(history: TurnRecord[], battleLog: BattleLog[]): void {
 const loadResult: LoadResult | null = loadGame();
 const loadedSave: SaveData | null = loadResult?.save ?? null;
 const wasBattleRepaired: boolean = loadResult?.battleRepaired ?? false;
+const battleStateWasInconsistentOnLoad: boolean = loadResult?.battleStateWasInconsistent ?? false;
 
 function loadHighScore(): HighScore {
   try {
@@ -405,9 +406,17 @@ export default function App() {
   useEffect(() => {
     if (saveRestoredRef.current) {
       const restoredFloor = loadedSave!.floor;
-      const restoreEvent = wasBattleRepaired
-        ? "💾 已恢复存档（战斗状态异常已重置，可重新挑战该房间），继续探索！"
-        : "💾 已恢复上次存档，继续探索！";
+      const inBattle = loadedSave!.battleState === "fighting";
+      let restoreEvent: string;
+      if (battleStateWasInconsistentOnLoad) {
+        restoreEvent = "💾 已恢复存档（战斗存档不一致，已重置为非战斗状态，该房间需重新挑战），继续探索！";
+      } else if (inBattle) {
+        restoreEvent = "💾 已恢复战斗存档，当前仍处于战斗中，加油击败怪物！";
+      } else if (wasBattleRepaired) {
+        restoreEvent = "💾 已恢复存档（战斗状态异常已重置，可重新挑战该房间），继续探索！";
+      } else {
+        restoreEvent = "💾 已恢复上次存档，继续探索！";
+      }
       setHistory((prev) => [
         {
           id: ++recordIdCounter,
@@ -903,9 +912,13 @@ export default function App() {
         id: ++recordIdCounter,
         turn: 0,
         floor: s.floor,
-        event: result.battleRepaired
-          ? `💾 已从槽位 ${slot} 恢复（战斗状态异常已重置），继续探索！`
-          : `💾 已从槽位 ${slot} 恢复存档，继续探索！`,
+        event: result.battleStateWasInconsistent
+          ? `💾 已从槽位 ${slot} 恢复（战斗存档不一致，已重置为非战斗状态，该房间需重新挑战），继续探索！`
+          : result.battleWasLoaded && s.battleState === "fighting"
+            ? `💾 已从槽位 ${slot} 恢复战斗存档，当前仍处于战斗中，加油击败怪物！`
+            : result.battleRepaired
+              ? `💾 已从槽位 ${slot} 恢复（战斗状态异常已重置），继续探索！`
+              : `💾 已从槽位 ${slot} 恢复存档，继续探索！`,
         hpDelta: 0,
         coinDelta: 0,
         items: [],
@@ -1481,7 +1494,7 @@ export default function App() {
             <button
               className="btn-save"
               onClick={() => openSlotPanel("save")}
-              disabled={status !== "playing" || showSettlement || battleState !== "idle"}
+              disabled={status !== "playing" || showSettlement}
             >
               💾 存档
             </button>
@@ -1641,6 +1654,14 @@ export default function App() {
             <div className="battle-header">
               <h2>⚔️ 战斗！</h2>
               <p>B{floor}F · 回合 {turn}</p>
+              <button
+                className="btn-battle-save"
+                onClick={() => openSlotPanel("save")}
+                disabled={status !== "playing" || showSettlement}
+                title="保存当前战斗状态到槽位"
+              >
+                💾 中途存档
+              </button>
             </div>
 
             <div className="battle-combatants">
