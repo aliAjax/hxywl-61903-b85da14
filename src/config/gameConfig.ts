@@ -17,6 +17,8 @@ export interface GameConstants {
   boardSize: number;
   maxHp: number;
   highScoreKey: string;
+  leaderboardKey: string;
+  maxLeaderboardEntries: number;
 }
 
 export interface EventConfig {
@@ -168,6 +170,8 @@ export const GAME_CONSTANTS: GameConstants = {
   boardSize: 5,
   maxHp: 5,
   highScoreKey: "dungeon-high-score",
+  leaderboardKey: "dungeon-leaderboard",
+  maxLeaderboardEntries: 20,
 };
 
 export const EVENT_CONFIG: Record<RoomType, EventConfig> = {

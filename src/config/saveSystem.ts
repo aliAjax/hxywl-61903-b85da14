@@ -546,3 +546,84 @@ export function deleteSlot(slot: number): void {
     /* ignore */
   }
 }
+
+export type LeaderboardResultType = "clear" | "death" | "restart";
+
+export interface LeaderboardEntry {
+  id: number;
+  resultType: LeaderboardResultType;
+  floor: number;
+  coins: number;
+  revealedRooms: number;
+  trapHits: number;
+  monstersDefeated: number;
+  stars: number;
+  rank: string;
+  timestamp: number;
+}
+
+const LEADERBOARD_KEY = GAME_CONSTANTS.leaderboardKey;
+const MAX_ENTRIES = GAME_CONSTANTS.maxLeaderboardEntries;
+
+function validateLeaderboardEntry(entry: unknown): entry is LeaderboardEntry {
+  if (!isObject(entry)) return false;
+  if (!isNumber(entry.id) || entry.id < 0) return false;
+  if (!isString(entry.resultType) || !["clear", "death", "restart"].includes(entry.resultType as string)) return false;
+  if (!isNumber(entry.floor) || entry.floor < 1) return false;
+  if (!isNumber(entry.coins) || entry.coins < 0) return false;
+  if (!isNumber(entry.revealedRooms) || entry.revealedRooms < 0) return false;
+  if (!isNumber(entry.trapHits) || entry.trapHits < 0) return false;
+  if (!isNumber(entry.monstersDefeated) || entry.monstersDefeated < 0) return false;
+  if (!isNumber(entry.stars) || entry.stars < 1 || entry.stars > 5) return false;
+  if (!isString(entry.rank)) return false;
+  if (!isNumber(entry.timestamp) || entry.timestamp <= 0) return false;
+  return true;
+}
+
+export function loadLeaderboard(): LeaderboardEntry[] {
+  try {
+    const raw = localStorage.getItem(LEADERBOARD_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const valid: LeaderboardEntry[] = [];
+    for (const item of parsed) {
+      if (validateLeaderboardEntry(item)) {
+        valid.push(item);
+      }
+    }
+    return valid;
+  } catch {
+    return [];
+  }
+}
+
+export function saveLeaderboard(entries: LeaderboardEntry[]): void {
+  try {
+    const trimmed = entries.slice(0, MAX_ENTRIES);
+    localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(trimmed));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function addLeaderboardEntry(entry: Omit<LeaderboardEntry, "id" | "timestamp">): LeaderboardEntry[] {
+  const entries = loadLeaderboard();
+  const maxId = entries.reduce((max, e) => Math.max(max, e.id), 0);
+  const newEntry: LeaderboardEntry = {
+    ...entry,
+    id: maxId + 1,
+    timestamp: Date.now(),
+  };
+  const updated = [newEntry, ...entries].slice(0, MAX_ENTRIES);
+  saveLeaderboard(updated);
+  return updated;
+}
+
+export function clearLeaderboard(): void {
+  try {
+    localStorage.removeItem(LEADERBOARD_KEY);
+  } catch {
+    /* ignore */
+  }
+}
