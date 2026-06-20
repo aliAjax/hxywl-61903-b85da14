@@ -260,6 +260,116 @@ button {
   }
 }
 
+.cell.risk-level-1 {
+  border-color: rgba(34, 197, 94, 0.45);
+  position: relative;
+}
+
+.cell.risk-level-2 {
+  border-color: rgba(74, 222, 128, 0.35);
+  position: relative;
+}
+
+.cell.risk-level-3 {
+  border-color: rgba(148, 163, 184, 0.35);
+  position: relative;
+}
+
+.cell.risk-level-4 {
+  border-color: rgba(251, 146, 60, 0.45);
+  position: relative;
+}
+
+.cell.risk-level-5 {
+  border-color: rgba(239, 68, 68, 0.5);
+  position: relative;
+  animation: risk-danger-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes risk-danger-pulse {
+  0%, 100% {
+    border-color: rgba(239, 68, 68, 0.35);
+    box-shadow: 0 0 0 rgba(239, 68, 68, 0);
+  }
+  50% {
+    border-color: rgba(248, 113, 113, 0.6);
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.15);
+  }
+}
+
+.risk-indicator {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+}
+
+.risk-icon {
+  font-size: 22px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.risk-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: 0 0 6px currentColor;
+}
+
+.risk-hint-toggle {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(168, 85, 247, 0.1);
+  border: 1px solid rgba(168, 85, 247, 0.22);
+}
+
+.risk-hint-toggle .toggle-switch.toggle-on {
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+  box-shadow: 0 0 10px rgba(168, 85, 247, 0.35);
+}
+
+.risk-legend {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(168, 85, 247, 0.15);
+}
+
+.legend-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #c4b5fd;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.legend-items {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 4px currentColor;
+}
+
 .route-hint-toggle {
   margin-top: 14px;
   padding: 12px 14px;
@@ -729,7 +839,8 @@ button {
     font-size: 13px;
   }
 
-  .route-hint-toggle {
+  .route-hint-toggle,
+  .risk-hint-toggle {
     padding: 10px 12px;
   }
 

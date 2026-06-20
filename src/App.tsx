@@ -21,7 +21,6 @@ import {
   RouteConfig,
 } from "./config/gameConfig";
 import {
-  generateMap,
   verifyMap,
   printMapDebug,
   runSingleDiagIteration,
@@ -33,52 +32,36 @@ import {
   DiagProgress,
 } from "./config/mapGenerator";
 import {
-  saveGame,
-  loadGame,
-  clearSave,
-  SaveData,
-  LoadResult,
-  saveGameToSlot,
-  loadGameFromSlot,
-  getSlotList,
-  deleteSlot,
-  SlotMeta,
   MAX_SLOTS,
   LeaderboardEntry,
   loadLeaderboard,
   addLeaderboardEntry,
   clearLeaderboard,
 } from "./config/saveSystem";
+import {
+  BattleLog,
+  BattleState,
+  GameStats,
+  INITIAL_STATS,
+  Room,
+  TurnRecord,
+  createBattleLog,
+  createTurnRecord,
+  generateBoard,
+  getLastGenResult,
+  useNormalProgress,
+} from "./hooks/useNormalProgress";
+import {
+  estimateRoomRisks,
+  getRiskColor,
+  getRiskIcon,
+  RiskEstimate,
+} from "./config/riskEstimator";
 
 const SIZE = GAME_CONSTANTS.boardSize;
 const TOTAL = getTotalCells();
 const MAX_HP = GAME_CONSTANTS.maxHp;
 const HIGH_SCORE_KEY = GAME_CONSTANTS.highScoreKey;
-
-interface Room {
-  type: RoomType;
-  revealed: boolean;
-  defeated?: boolean;
-}
-
-interface BattleLog {
-  id: number;
-  message: string;
-  type: "player" | "monster" | "system" | "reward";
-}
-
-type BattleState = "idle" | "fighting" | "won" | "lost" | "fled";
-
-interface TurnRecord {
-  id: number;
-  turn: number;
-  floor: number;
-  event: string;
-  roomType?: RoomType;
-  hpDelta: number;
-  coinDelta: number;
-  items: string[];
-}
 
 type GameResultType = "clear" | "death" | "restart";
 
@@ -110,14 +93,6 @@ const HISTORY_FILTERS: FilterOption[] = [
   },
 ];
 
-interface GameStats {
-  revealedRooms: number;
-  trapHits: number;
-  monstersDefeated: number;
-  potionsUsed: number;
-  fleeCount: number;
-}
-
 interface HighScore {
   maxFloor: number;
   maxCoins: number;
@@ -133,44 +108,6 @@ const SYMBOLS: Record<RoomType, string> = {
   potion: getSymbol("potion"),
   empty: getSymbol("empty"),
 };
-
-function generateBoard(floor: number = 1, route: RouteType = null): Room[] {
-  const result = generateMap(floor, route);
-  lastGenResult = result;
-  return result.rooms.map((t) => ({ type: t, revealed: t === "start" }));
-}
-
-let lastGenResult: GenerationResult | null = null;
-
-export function getLastGenResult(): GenerationResult | null {
-  return lastGenResult;
-}
-
-let battleLogIdCounter = 0;
-
-function createBattleLog(message: string, type: BattleLog["type"]): BattleLog {
-  return { id: ++battleLogIdCounter, message, type };
-}
-
-let recordIdCounter = 0;
-
-function restoreCounters(history: TurnRecord[], battleLog: BattleLog[]): void {
-  let maxRecord = 0;
-  for (const r of history) {
-    if (r.id > maxRecord) maxRecord = r.id;
-  }
-  let maxBattleLog = 0;
-  for (const l of battleLog) {
-    if (l.id > maxBattleLog) maxBattleLog = l.id;
-  }
-  recordIdCounter = maxRecord;
-  battleLogIdCounter = maxBattleLog;
-}
-
-const loadResult: LoadResult | null = loadGame();
-const loadedSave: SaveData | null = loadResult?.save ?? null;
-const wasBattleRepaired: boolean = loadResult?.battleRepaired ?? false;
-const battleStateWasInconsistentOnLoad: boolean = loadResult?.battleStateWasInconsistent ?? false;
 
 function loadHighScore(): HighScore {
   try {
@@ -341,73 +278,64 @@ function generateHighlights(
   return candidates.slice(0, 3);
 }
 
-const INITIAL_STATS: GameStats = {
-  revealedRooms: 1,
-  trapHits: 0,
-  monstersDefeated: 0,
-  potionsUsed: 0,
-  fleeCount: 0,
-};
-
 export default function App() {
-  const initialFloor = loadedSave?.floor ?? 1;
-  const [board, setBoard] = useState<Room[]>(() =>
-    loadedSave ? loadedSave.board : generateBoard(initialFloor)
-  );
-  const [hp, setHp] = useState(loadedSave?.hp ?? MAX_HP);
-  const [coins, setCoins] = useState(loadedSave?.coins ?? 0);
-  const [keys, setKeys] = useState(loadedSave?.keys ?? 0);
-  const [potions, setPotions] = useState(loadedSave?.potions ?? 0);
-  const [floor, setFloor] = useState(initialFloor);
-  const [status, setStatus] = useState<"playing" | "won" | "lost">(loadedSave?.status ?? "playing");
-  const [turn, setTurn] = useState(loadedSave?.turn ?? 0);
-  const [stats, setStats] = useState<GameStats>(() => {
-    const s = loadedSave?.stats;
-    if (s) {
-      return {
-        revealedRooms: s.revealedRooms,
-        trapHits: s.trapHits,
-        monstersDefeated: s.monstersDefeated,
-        potionsUsed: s.potionsUsed ?? 0,
-        fleeCount: s.fleeCount ?? 0,
-      };
-    }
-    return INITIAL_STATS;
-  });
   const [showSettlement, setShowSettlement] = useState(false);
   const [settlementResult, setSettlementResult] = useState<GameResultType | null>(null);
   const [highScore, setHighScore] = useState<HighScore>(() => loadHighScore());
-  const [battleState, setBattleState] = useState<BattleState>(loadedSave?.battleState ?? "idle");
-  const [currentMonster, setCurrentMonster] = useState<Monster | null>(loadedSave?.currentMonster ?? null);
-  const [battleLog, setBattleLog] = useState<BattleLog[]>(loadedSave?.battleLog ?? []);
-  const [battleRoomIdx, setBattleRoomIdx] = useState(loadedSave?.battleRoomIdx ?? -1);
+  const {
+    board,
+    setBoard,
+    hp,
+    setHp,
+    coins,
+    setCoins,
+    keys,
+    setKeys,
+    potions,
+    setPotions,
+    floor,
+    status,
+    setStatus,
+    turn,
+    setTurn,
+    stats,
+    setStats,
+    battleState,
+    setBattleState,
+    currentMonster,
+    setCurrentMonster,
+    battleLog,
+    setBattleLog,
+    battleRoomIdx,
+    setBattleRoomIdx,
+    history,
+    setHistory,
+    showRouteHint,
+    setShowRouteHint,
+    showRiskHint,
+    setShowRiskHint,
+    playerCharging,
+    setPlayerCharging,
+    currentRoute,
+    showRouteSelect,
+    setShowRouteSelect,
+    showSlotPanel,
+    setShowSlotPanel,
+    slotList,
+    resetProgress,
+    nextFloor,
+    confirmRouteAndNextFloor,
+    saveToSlot,
+    loadFromSlot,
+    deleteSaveSlot,
+    openSlotPanel,
+  } = useNormalProgress({ showSettlement });
   const [brokeFloorRecord, setBrokeFloorRecord] = useState(false);
   const [brokeCoinRecord, setBrokeCoinRecord] = useState(false);
-  const [history, setHistory] = useState<TurnRecord[]>(() => {
-    if (loadedSave?.history) {
-      restoreCounters(loadedSave.history, loadedSave.battleLog);
-      return loadedSave.history;
-    }
-    return [
-      {
-        id: ++recordIdCounter,
-        turn: 0,
-        floor: initialFloor,
-        event: `🏠 游戏开始！进入B${initialFloor}F，翻开相邻房间探索地牢`,
-        hpDelta: 0,
-        coinDelta: 0,
-        items: [],
-      },
-    ];
-  });
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [revealAllRooms, setRevealAllRooms] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
-  const [showRouteHint, setShowRouteHint] = useState(loadedSave?.showRouteHint ?? false);
-  const [playerCharging, setPlayerCharging] = useState(loadedSave?.playerCharging ?? false);
-  const [currentRoute, setCurrentRoute] = useState<RouteType>(loadedSave?.currentRoute ?? null);
-  const [showRouteSelect, setShowRouteSelect] = useState(false);
   const [diagFloorFrom, setDiagFloorFrom] = useState(1);
   const [diagFloorTo, setDiagFloorTo] = useState(10);
   const [diagIterations, setDiagIterations] = useState(50);
@@ -417,67 +345,11 @@ export default function App() {
   const [diagExpandedFloor, setDiagExpandedFloor] = useState<number | null>(null);
   const [diagViewMode, setDiagViewMode] = useState<"overview" | "detail">("overview");
   const diagRef = useRef<{ cancelled: boolean }>({ cancelled: false });
-  const [showSlotPanel, setShowSlotPanel] = useState<"save" | "load" | null>(null);
-  const [slotList, setSlotList] = useState<SlotMeta[]>(() => getSlotList());
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(() => loadLeaderboard());
   const [leaderboardSort, setLeaderboardSort] = useState<LeaderboardSortKey>("time");
 
-  const saveRestoredRef = useRef(!!loadedSave);
   const frozenRouteHintRef = useRef<Set<number>>(new Set());
-
-  useEffect(() => {
-    if (saveRestoredRef.current) {
-      const restoredFloor = loadedSave!.floor;
-      const inBattle = loadedSave!.battleState === "fighting";
-      let restoreEvent: string;
-      if (battleStateWasInconsistentOnLoad) {
-        restoreEvent = "💾 已恢复存档（战斗存档不一致，已重置为非战斗状态，该房间需重新挑战），继续探索！";
-      } else if (inBattle) {
-        restoreEvent = "💾 已恢复战斗存档，当前仍处于战斗中，加油击败怪物！";
-      } else if (wasBattleRepaired) {
-        restoreEvent = "💾 已恢复存档（战斗状态异常已重置，可重新挑战该房间），继续探索！";
-      } else {
-        restoreEvent = "💾 已恢复上次存档，继续探索！";
-      }
-      setHistory((prev) => [
-        {
-          id: ++recordIdCounter,
-          turn: 0,
-          floor: restoredFloor,
-          event: restoreEvent,
-          hpDelta: 0,
-          coinDelta: 0,
-          items: [],
-        },
-        ...prev,
-      ]);
-      saveRestoredRef.current = false;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (showSettlement) return;
-    saveGame({
-      board,
-      hp,
-      coins,
-      keys,
-      potions,
-      floor,
-      status,
-      turn,
-      stats,
-      battleState,
-      currentMonster,
-      battleLog,
-      battleRoomIdx,
-      history,
-      showRouteHint,
-      playerCharging,
-      currentRoute,
-    });
-  }, [board, hp, coins, keys, potions, floor, status, turn, stats, battleState, currentMonster, battleLog, battleRoomIdx, history, showSettlement, showRouteHint, playerCharging, currentRoute]);
 
   const flippable = useMemo(() => {
     if (battleState !== "idle") return new Set<number>();
@@ -573,8 +445,7 @@ export default function App() {
           const nextTurn = turn + 1;
           setTurn(nextTurn);
           setHistory((prev: TurnRecord[]) => [
-            {
-              id: ++recordIdCounter,
+            createTurnRecord({
               turn: nextTurn,
               floor,
               event: EVENT_MESSAGES.exitWithKey,
@@ -582,7 +453,7 @@ export default function App() {
               hpDelta: 0,
               coinDelta: 0,
               items: [],
-            },
+            }),
             ...prev,
           ]);
         }
@@ -615,8 +486,7 @@ export default function App() {
           createBattleLog(`怪物HP: ${monster.hp}/${monster.maxHp}，攻击力: ${monster.attack}`, "system"),
         ]);
         setHistory((prev: TurnRecord[]) => [
-          {
-            id: ++recordIdCounter,
+          createTurnRecord({
             turn: nextTurn,
             floor,
             event: EVENT_MESSAGES.monsterEncounterShort(monster),
@@ -624,7 +494,7 @@ export default function App() {
             hpDelta: 0,
             coinDelta: 0,
             items: [],
-          },
+          }),
           ...prev,
         ]);
         return;
@@ -636,8 +506,7 @@ export default function App() {
         if (room.type === "trap") {
           newStats.trapHits = stats.trapHits + 1;
         }
-        records.push({
-          id: ++recordIdCounter,
+        records.push(createTurnRecord({
           turn: nextTurn,
           floor,
           event: EVENT_MESSAGES.trapHit(dmg),
@@ -645,11 +514,10 @@ export default function App() {
           hpDelta: -dmg,
           coinDelta: 0,
           items: [],
-        });
+        }));
         if (newHp <= 0) {
           newStatus = "lost";
-          records.push({
-            id: ++recordIdCounter,
+          records.push(createTurnRecord({
             turn: nextTurn,
             floor,
             event: EVENT_MESSAGES.death,
@@ -657,7 +525,7 @@ export default function App() {
             hpDelta: 0,
             coinDelta: 0,
             items: [],
-          });
+          }));
           setTimeout(() => {
             triggerSettlement("death", floor, newCoins, newStats, newHp);
           }, 100);
@@ -665,8 +533,7 @@ export default function App() {
       } else if (room.type === "coin") {
         const gain = getCoinReward(floor, currentRoute);
         newCoins = coins + gain;
-        records.push({
-          id: ++recordIdCounter,
+        records.push(createTurnRecord({
           turn: nextTurn,
           floor,
           event: EVENT_MESSAGES.coinFound(gain, floor),
@@ -674,11 +541,10 @@ export default function App() {
           hpDelta: 0,
           coinDelta: gain,
           items: [],
-        });
+        }));
       } else if (room.type === "key") {
         newKeys = keys + 1;
-        records.push({
-          id: ++recordIdCounter,
+        records.push(createTurnRecord({
           turn: nextTurn,
           floor,
           event: EVENT_MESSAGES.keyFound,
@@ -686,11 +552,10 @@ export default function App() {
           hpDelta: 0,
           coinDelta: 0,
           items: ["🔑 钥匙"],
-        });
+        }));
         if (exitRevealed) {
           newStatus = "won";
-          records.push({
-            id: ++recordIdCounter,
+          records.push(createTurnRecord({
             turn: nextTurn,
             floor,
             event: EVENT_MESSAGES.exitWithKey,
@@ -698,12 +563,11 @@ export default function App() {
             hpDelta: 0,
             coinDelta: 0,
             items: [],
-          });
+          }));
         }
       } else if (room.type === "potion") {
         newPotions = potions + 1;
-        records.push({
-          id: ++recordIdCounter,
+        records.push(createTurnRecord({
           turn: nextTurn,
           floor,
           event: EVENT_MESSAGES.potionFound,
@@ -711,12 +575,11 @@ export default function App() {
           hpDelta: 0,
           coinDelta: 0,
           items: ["🧪 药水"],
-        });
+        }));
       } else if (room.type === "exit") {
         if (keys > 0) {
           newStatus = "won";
-          records.push({
-            id: ++recordIdCounter,
+          records.push(createTurnRecord({
             turn: nextTurn,
             floor,
             event: EVENT_MESSAGES.exitWithKey,
@@ -724,10 +587,9 @@ export default function App() {
             hpDelta: 0,
             coinDelta: 0,
             items: [],
-          });
+          }));
         } else {
-          records.push({
-            id: ++recordIdCounter,
+          records.push(createTurnRecord({
             turn: nextTurn,
             floor,
             event: EVENT_MESSAGES.exitNoKey,
@@ -735,11 +597,10 @@ export default function App() {
             hpDelta: 0,
             coinDelta: 0,
             items: [],
-          });
+          }));
         }
       } else if (room.type === "empty") {
-        records.push({
-          id: ++recordIdCounter,
+        records.push(createTurnRecord({
           turn: nextTurn,
           floor,
           event: EVENT_MESSAGES.emptyRoom,
@@ -747,7 +608,7 @@ export default function App() {
           hpDelta: 0,
           coinDelta: 0,
           items: [],
-        });
+        }));
       }
 
       setBoard((prev: Room[]) =>
@@ -776,246 +637,52 @@ export default function App() {
   }, [status, floor, coins, stats, hp, triggerSettlement]);
 
   const doResetGame = useCallback(() => {
-    clearSave();
-    const newFloor = 1;
-    setBoard(generateBoard(newFloor, null));
-    setHp(MAX_HP);
-    setCoins(0);
-    setKeys(0);
-    setPotions(0);
-    setFloor(newFloor);
-    setStatus("playing");
-    setTurn(0);
-    setStats(INITIAL_STATS);
+    resetProgress();
     setShowSettlement(false);
     setSettlementResult(null);
     setBrokeFloorRecord(false);
     setBrokeCoinRecord(false);
-    setBattleState("idle");
-    setCurrentMonster(null);
-    setBattleLog([]);
-    setBattleRoomIdx(-1);
-    setPlayerCharging(false);
-    setCurrentRoute(null);
-    setShowRouteSelect(false);
-    setHistory([
-      {
-        id: ++recordIdCounter,
-        turn: 0,
-        floor: newFloor,
-        event: "🏠 重新开始探索！一切已重置，进入B1F",
-        hpDelta: 0,
-        coinDelta: 0,
-        items: [],
-      },
-    ]);
-  }, []);
-
-  const nextFloor = useCallback(() => {
-    setShowRouteSelect(true);
-  }, []);
-
-  const confirmRouteAndNextFloor = useCallback((route: RouteType) => {
-    const newFloor = floor + 1;
-    const nextCfg = getFloorConfig(newFloor, route);
-    const routeCfg = route ? ROUTE_CONFIGS[route] : null;
-    setBoard(generateBoard(newFloor, route));
-    setFloor(newFloor);
-    setKeys(0);
-    setStatus("playing");
-    setTurn(0);
-    setBattleState("idle");
-    setCurrentMonster(null);
-    setBattleLog([]);
-    setBattleRoomIdx(-1);
-    setPlayerCharging(false);
-    setCurrentRoute(route);
-    setShowRouteSelect(false);
-
-    let routeMessage = "";
-    if (routeCfg) {
-      const effects: string[] = [];
-      if (routeCfg.potionModifier !== 0) {
-        effects.push(`药水${routeCfg.potionModifier > 0 ? "+" : ""}${routeCfg.potionModifier}`);
-      }
-      if (routeCfg.coinMultiplier !== 1) {
-        effects.push(`金币×${routeCfg.coinMultiplier}`);
-      }
-      if (routeCfg.monsterStrengthMultiplier !== 1) {
-        effects.push(`怪物强度×${routeCfg.monsterStrengthMultiplier}`);
-      }
-      if (routeCfg.pathDamageModifier !== 0) {
-        effects.push(`路径上限${routeCfg.pathDamageModifier > 0 ? "+" : ""}${routeCfg.pathDamageModifier}`);
-      }
-      routeMessage = `选择了「${routeCfg.icon} ${routeCfg.name}」路线（${effects.join("，")}）。`;
-    }
-
-    setHistory((prev: TurnRecord[]) => [
-      {
-        id: ++recordIdCounter,
-        turn: 0,
-        floor: newFloor,
-        event: `⬆️ ${routeMessage}进入B${newFloor}F！陷阱+${nextCfg.trapCt}、怪物+${nextCfg.monsterCt}、金币奖励范围${nextCfg.coinMin}~${nextCfg.coinMax}，请谨慎探索`,
-        hpDelta: 0,
-        coinDelta: 0,
-        items: routeCfg ? [`${routeCfg.icon} ${routeCfg.name}路线`] : [],
-      },
-      ...prev,
-    ]);
-  }, [floor]);
-
-  const handleSaveToSlot = useCallback((slot: number) => {
-    saveGameToSlot(slot, {
-      board,
-      hp,
-      coins,
-      keys,
-      potions,
-      floor,
-      status,
-      turn,
-      stats,
-      battleState,
-      currentMonster,
-      battleLog,
-      battleRoomIdx,
-      history,
-      showRouteHint,
-      playerCharging,
-      currentRoute,
-    });
-    setSlotList(getSlotList());
-    setShowSlotPanel(null);
-    setHistory((prev) => [
-      {
-        id: ++recordIdCounter,
-        turn,
-        floor,
-        event: `💾 已保存到槽位 ${slot}`,
-        hpDelta: 0,
-        coinDelta: 0,
-        items: [],
-      },
-      ...prev,
-    ]);
-  }, [board, hp, coins, keys, potions, floor, status, turn, stats, battleState, currentMonster, battleLog, battleRoomIdx, history, showRouteHint, playerCharging, currentRoute]);
-
-  const handleLoadFromSlot = useCallback((slot: number) => {
-    const result = loadGameFromSlot(slot);
-    if (!result) {
-      setHistory((prev) => [
-        {
-          id: ++recordIdCounter,
-          turn,
-          floor,
-          event: `❌ 槽位 ${slot} 存档无效或已损坏，无法读取`,
-          hpDelta: 0,
-          coinDelta: 0,
-          items: [],
-        },
-        ...prev,
-      ]);
-      setSlotList(getSlotList());
-      return;
-    }
-    const s = result.save;
-    restoreCounters(s.history, s.battleLog);
-    setBoard(s.board);
-    setHp(s.hp);
-    setCoins(s.coins);
-    setKeys(s.keys);
-    setPotions(s.potions);
-    setFloor(s.floor);
-    setStatus(s.status);
-    setTurn(s.turn);
-    setStats({
-      revealedRooms: s.stats.revealedRooms,
-      trapHits: s.stats.trapHits,
-      monstersDefeated: s.stats.monstersDefeated,
-      potionsUsed: s.stats.potionsUsed ?? 0,
-      fleeCount: s.stats.fleeCount ?? 0,
-    });
-    setBattleState(s.battleState);
-    setCurrentMonster(s.currentMonster);
-    setBattleLog(s.battleLog);
-    setBattleRoomIdx(s.battleRoomIdx);
-    setPlayerCharging(s.playerCharging ?? false);
-    setCurrentRoute(s.currentRoute ?? null);
-    setShowRouteHint(s.showRouteHint ?? false);
-    setHistory([
-      {
-        id: ++recordIdCounter,
-        turn: 0,
-        floor: s.floor,
-        event: result.battleStateWasInconsistent
-          ? `💾 已从槽位 ${slot} 恢复（战斗存档不一致，已重置为非战斗状态，该房间需重新挑战），继续探索！`
-          : result.battleWasLoaded && s.battleState === "fighting"
-            ? `💾 已从槽位 ${slot} 恢复战斗存档，当前仍处于战斗中，加油击败怪物！`
-            : result.battleRepaired
-              ? `💾 已从槽位 ${slot} 恢复（战斗状态异常已重置），继续探索！`
-              : `💾 已从槽位 ${slot} 恢复存档，继续探索！`,
-        hpDelta: 0,
-        coinDelta: 0,
-        items: [],
-      },
-      ...s.history,
-    ]);
-    setShowSlotPanel(null);
-    setSlotList(getSlotList());
-  }, [turn, floor]);
-
-  const handleDeleteSlot = useCallback((slot: number) => {
-    deleteSlot(slot);
-    setSlotList(getSlotList());
-  }, []);
-
-  const openSlotPanel = useCallback((mode: "save" | "load") => {
-    setSlotList(getSlotList());
-    setShowSlotPanel(mode);
-  }, []);
+  }, [resetProgress]);
 
   const usePotion = useCallback(() => {
     if (status !== "playing") {
       setHistory((prev: TurnRecord[]) => [
-        {
-          id: ++recordIdCounter,
+        createTurnRecord({
           turn,
           floor,
           event: "❌ 游戏未进行中，无法使用药水",
           hpDelta: 0,
           coinDelta: 0,
           items: [],
-        },
+        }),
         ...prev,
       ]);
       return;
     }
     if (potions <= 0) {
       setHistory((prev: TurnRecord[]) => [
-        {
-          id: ++recordIdCounter,
+        createTurnRecord({
           turn,
           floor,
           event: EVENT_MESSAGES.noPotionLog,
           hpDelta: 0,
           coinDelta: 0,
           items: [],
-        },
+        }),
         ...prev,
       ]);
       return;
     }
     if (hp >= MAX_HP) {
       setHistory((prev: TurnRecord[]) => [
-        {
-          id: ++recordIdCounter,
+        createTurnRecord({
           turn,
           floor,
           event: EVENT_MESSAGES.hpFullLog,
           hpDelta: 0,
           coinDelta: 0,
           items: [],
-        },
+        }),
         ...prev,
       ]);
       return;
@@ -1025,15 +692,14 @@ export default function App() {
     setHp((h: number) => Math.min(MAX_HP, h + healAmount));
     setStats((s: GameStats) => ({ ...s, potionsUsed: s.potionsUsed + 1 }));
     setHistory((prev: TurnRecord[]) => [
-      {
-        id: ++recordIdCounter,
+      createTurnRecord({
         turn,
         floor,
         event: EVENT_MESSAGES.potionUse(healAmount),
         hpDelta: healAmount,
         coinDelta: 0,
         items: [],
-      },
+      }),
       ...prev,
     ]);
   }, [potions, hp, status, turn, floor]);
@@ -1070,8 +736,7 @@ export default function App() {
           ),
         ]);
         setHistory((prev: TurnRecord[]) => [
-          {
-            id: ++recordIdCounter,
+          createTurnRecord({
             turn,
             floor,
             event: EVENT_MESSAGES.monsterDefeated(finalMonster, gotPotion),
@@ -1079,7 +744,7 @@ export default function App() {
             hpDelta: 0,
             coinDelta: finalMonster.coinReward,
             items: gotPotion ? ["🧪 药水"] : [],
-          },
+          }),
           ...prev,
         ]);
       } else if (result === "fled") {
@@ -1098,8 +763,7 @@ export default function App() {
           createBattleLog(EVENT_MESSAGES.roomResetLog, "system"),
         ]);
         setHistory((prev: TurnRecord[]) => [
-          {
-            id: ++recordIdCounter,
+          createTurnRecord({
             turn,
             floor,
             event: EVENT_MESSAGES.flee(finalFleeDamage),
@@ -1107,7 +771,7 @@ export default function App() {
             hpDelta: -finalFleeDamage,
             coinDelta: 0,
             items: [],
-          },
+          }),
           ...prev,
         ]);
         if (finalHp <= 0) {
@@ -1130,8 +794,7 @@ export default function App() {
         setHp(0);
         setStatus("lost");
         setHistory((prev: TurnRecord[]) => [
-          {
-            id: ++recordIdCounter,
+          createTurnRecord({
             turn,
             floor,
             event: EVENT_MESSAGES.monsterKilledPlayer(finalMonster),
@@ -1139,7 +802,7 @@ export default function App() {
             hpDelta: 0,
             coinDelta: 0,
             items: [],
-          },
+          }),
           ...prev,
         ]);
         setTimeout(() => {
@@ -1510,6 +1173,10 @@ export default function App() {
   const floorCfg: FloorConfig = getFloorConfig(floor, currentRoute);
   const currentRouteCfg: RouteConfig | null = currentRoute ? ROUTE_CONFIGS[currentRoute] : null;
 
+  const riskEstimates: RiskEstimate[] = useMemo(() => {
+    return estimateRoomRisks(board, floorCfg);
+  }, [board, floorCfg]);
+
   return (
     <main className="game-shell">
       <section className="hero">
@@ -1556,6 +1223,9 @@ export default function App() {
               room.revealed && room.type === "exit" && keys > 0 && canFlip;
             const isDefeated = room.type === "monster" && room.defeated;
             const isDisabled = !canFlip && !room.revealed;
+            const risk = riskEstimates[idx];
+            const showRisk = showRiskHint && !room.revealed && risk;
+            const riskClass = showRisk ? `risk-level-${risk.level}` : "";
             return (
               <button
                 key={idx}
@@ -1565,6 +1235,7 @@ export default function App() {
                   room.revealed ? "revealed" : "",
                   showFlippableHighlight ? "flippable" : "",
                   isRouteHint ? "route-hint" : "",
+                  riskClass,
                   canClickExit ? "can-exit" : "",
                   isDefeated ? "defeated" : "",
                   isDisabled ? "disabled" : "",
@@ -1578,7 +1249,12 @@ export default function App() {
                   ? isDefeated
                     ? "💀"
                     : SYMBOLS[room.type as keyof typeof SYMBOLS]
-                  : "?"}
+                  : showRisk
+                    ? <span className="risk-indicator">
+                        <span className="risk-icon">{getRiskIcon(risk.level)}</span>
+                        <span className="risk-dot" style={{ backgroundColor: getRiskColor(risk.level) }}></span>
+                      </span>
+                    : "?"}
               </button>
             );
           })}
@@ -1630,6 +1306,47 @@ export default function App() {
                 <span className="toggle-knob" />
               </button>
             </label>
+          </div>
+          <div className="risk-hint-toggle">
+            <label className="toggle-label">
+              <span className="toggle-icon">🔮</span>
+              <span className="toggle-text">雾中推理</span>
+              <span className="toggle-desc">根据已知信息推测风险</span>
+              <button
+                type="button"
+                className={`toggle-switch ${showRiskHint ? "toggle-on" : "toggle-off"}`}
+                onClick={() => setShowRiskHint((prev) => !prev)}
+              >
+                <span className="toggle-knob" />
+              </button>
+            </label>
+            {showRiskHint && (
+              <div className="risk-legend">
+                <div className="legend-title">风险等级</div>
+                <div className="legend-items">
+                  <div className="legend-item">
+                    <span className="legend-dot" style={{ backgroundColor: getRiskColor(1) }}></span>
+                    <span>极安全</span>
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-dot" style={{ backgroundColor: getRiskColor(2) }}></span>
+                    <span>较安全</span>
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-dot" style={{ backgroundColor: getRiskColor(3) }}></span>
+                    <span>未知</span>
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-dot" style={{ backgroundColor: getRiskColor(4) }}></span>
+                    <span>较危险</span>
+                  </div>
+                  <div className="legend-item">
+                    <span className="legend-dot" style={{ backgroundColor: getRiskColor(5) }}></span>
+                    <span>极危险</span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           <div className="actions">
             <button
@@ -2088,7 +1805,7 @@ export default function App() {
                       {isSaveMode ? (
                         <button
                           className="btn-slot-save"
-                          onClick={() => handleSaveToSlot(slot.index)}
+                          onClick={() => saveToSlot(slot.index)}
                         >
                           {isEmpty ? "保存到此处" : "覆盖保存"}
                         </button>
@@ -2099,13 +1816,13 @@ export default function App() {
                               <button
                                 className="btn-slot-load"
                                 disabled={isInvalid}
-                                onClick={() => handleLoadFromSlot(slot.index)}
+                                onClick={() => loadFromSlot(slot.index)}
                               >
                                 读取
                               </button>
                               <button
                                 className="btn-slot-delete"
-                                onClick={() => handleDeleteSlot(slot.index)}
+                                onClick={() => deleteSaveSlot(slot.index)}
                               >
                                 删除
                               </button>

@@ -68,6 +68,7 @@ export interface SaveData {
   battleRoomIdx: number;
   history: SavedTurnRecord[];
   showRouteHint?: boolean;
+  showRiskHint?: boolean;
   playerCharging?: boolean;
   currentRoute?: RouteType;
 }
