@@ -17,6 +17,13 @@ import {
   getNeighbors,
   getTotalCells,
 } from "./config/gameConfig";
+import {
+  generateMap,
+  verifyMap,
+  printMapDebug,
+  runGenerationDiagnostics,
+  GenerationResult,
+} from "./config/mapGenerator";
 
 const SIZE = GAME_CONSTANTS.boardSize;
 const TOTAL = getTotalCells();
@@ -72,81 +79,16 @@ const SYMBOLS: Record<RoomType, string> = {
   empty: getSymbol("empty"),
 };
 
-function minDamagePath(types: RoomType[], from: number, to: number): number {
-  const dist = new Array<number>(TOTAL).fill(Infinity);
-  dist[from] = 0;
-  const visited = new Set<number>();
-  for (let iter = 0; iter < TOTAL; iter++) {
-    let u = -1;
-    let best = Infinity;
-    for (let i = 0; i < TOTAL; i++) {
-      if (!visited.has(i) && dist[i] < best) {
-        best = dist[i];
-        u = i;
-      }
-    }
-    if (u === -1 || u === to) break;
-    visited.add(u);
-    for (const v of getNeighbors(u)) {
-      if (!visited.has(v)) {
-        const alt = dist[u] + getDamage(types[v]);
-        if (alt < dist[v]) dist[v] = alt;
-      }
-    }
-  }
-  return dist[to];
+function generateBoard(floor: number = 1): Room[] {
+  const result = generateMap(floor);
+  lastGenResult = result;
+  return result.rooms.map((t) => ({ type: t, revealed: t === "start" }));
 }
 
-function generateBoard(floor: number = 1): Room[] {
-  const cfg = getFloorConfig(floor);
-  const totalAllocated = cfg.keyCt + cfg.exitCt + cfg.coinCt + cfg.trapCt + cfg.monsterCt + cfg.potionCt;
-  const maxAllocatable = TOTAL - 1;
-  const overflow = Math.max(0, totalAllocated - maxAllocatable);
-  const adjCoin = Math.max(1, cfg.coinCt - Math.ceil(overflow / 2));
-  const adjTrap = Math.max(1, cfg.trapCt - Math.ceil(overflow / 3));
-  const adjMonster = Math.max(1, cfg.monsterCt - Math.floor(overflow / 3));
-  const adjPotion = cfg.potionCt;
+let lastGenResult: GenerationResult | null = null;
 
-  for (let attempt = 0; attempt < 200; attempt++) {
-    const types: RoomType[] = new Array<RoomType>(TOTAL).fill("empty");
-    types[0] = "start";
-    const positions = shuffle(
-      Array.from({ length: TOTAL }, (_, i) => i).filter((i) => i !== 0)
-    );
-    const keyIdx = positions[0];
-    const exitIdx = positions[1];
-    types[keyIdx] = "key";
-    types[exitIdx] = "exit";
-    const rest = positions.slice(2);
-    for (let i = 0; i < rest.length; i++) {
-      if (i < adjCoin) types[rest[i]] = "coin";
-      else if (i < adjCoin + adjTrap) types[rest[i]] = "trap";
-      else if (i < adjCoin + adjTrap + adjMonster) types[rest[i]] = "monster";
-      else if (i < adjCoin + adjTrap + adjMonster + adjPotion) types[rest[i]] = "potion";
-    }
-    const d1 = minDamagePath(types, 0, keyIdx);
-    const d2 = minDamagePath(types, keyIdx, exitIdx);
-    if (d1 + d2 <= cfg.pathMaxDamage) {
-      return types.map((t) => ({ type: t, revealed: t === "start" }));
-    }
-  }
-  const fallback: RoomType[] = new Array<RoomType>(TOTAL).fill("empty");
-  fallback[0] = "start";
-  fallback[12] = "key";
-  fallback[24] = "exit";
-  const safeCorridor = new Set([0, 1, 2, 7, 12, 17, 22, 23, 24]);
-  const allPositions = Array.from({ length: TOTAL }, (_, i) => i);
-  const available = shuffle(allPositions.filter((i) => !safeCorridor.has(i)));
-  const fbTrap = Math.min(adjTrap, 3);
-  const fbMonster = Math.min(adjMonster, 3);
-  const fbCoin = Math.min(adjCoin, 6);
-  const fbPotion = adjPotion;
-  let idx = 0;
-  for (let i = 0; i < fbTrap && idx < available.length; i++, idx++) fallback[available[idx]] = "trap";
-  for (let i = 0; i < fbMonster && idx < available.length; i++, idx++) fallback[available[idx]] = "monster";
-  for (let i = 0; i < fbCoin && idx < available.length; i++, idx++) fallback[available[idx]] = "coin";
-  for (let i = 0; i < fbPotion && idx < available.length; i++, idx++) fallback[available[idx]] = "potion";
-  return fallback.map((t) => ({ type: t, revealed: t === "start" }));
+export function getLastGenResult(): GenerationResult | null {
+  return lastGenResult;
 }
 
 let battleLogIdCounter = 0;
@@ -292,6 +234,9 @@ export default function App() {
       items: [],
     },
   ]);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [revealAllRooms, setRevealAllRooms] = useState(false);
 
   const flippable = useMemo(() => {
     if (battleState !== "idle") return new Set<number>();
@@ -908,6 +853,62 @@ export default function App() {
     };
   }, [showSettlement, settlementResult, floor, coins, stats, hp, brokeFloorRecord, brokeCoinRecord]);
 
+  const addDebugLog = useCallback((msg: string) => {
+    setDebugLog((prev) => [msg, ...prev].slice(0, 50));
+  }, []);
+
+  const verifyCurrentMap = useCallback(() => {
+    const cfg = getFloorConfig(floor);
+    const roomTypes = board.map((r) => r.type);
+    const result = verifyMap(roomTypes, cfg.pathMaxDamage);
+    addDebugLog(`验证结果: ${result.valid ? "✅ 通过" : "❌ 失败"}`);
+    if (result.issues.length > 0) {
+      result.issues.forEach((issue) => addDebugLog(`  - ${issue}`));
+    }
+    addDebugLog(`路径伤害: 起点→钥匙=${result.safePath ? "有" : "无"}`);
+  }, [board, floor, addDebugLog]);
+
+  const printDebugMap = useCallback(() => {
+    const roomTypes = board.map((r) => r.type);
+    const mapStr = printMapDebug(roomTypes, { showPath: true, showDamage: true });
+    addDebugLog("===== 地图布局 =====");
+    mapStr.split("\n").forEach((line) => addDebugLog(line));
+  }, [board, addDebugLog]);
+
+  const runDiagnostics = useCallback(() => {
+    addDebugLog("开始运行生成诊断（100次迭代）...");
+    const diag = runGenerationDiagnostics(floor, 100);
+    addDebugLog(`成功率: ${(diag.successRate * 100).toFixed(1)}%`);
+    addDebugLog(`平均尝试次数: ${diag.avgAttempts.toFixed(2)}`);
+    addDebugLog(`平均路径伤害: ${diag.avgPathDamage.toFixed(2)}`);
+    addDebugLog(`伤害范围: ${diag.minPathDamage} ~ ${diag.maxPathDamage}`);
+    if (Object.keys(diag.commonIssues).length > 0) {
+      addDebugLog("常见问题:");
+      Object.entries(diag.commonIssues).forEach(([issue, count]) => {
+        addDebugLog(`  - ${issue}: ${count}次`);
+      });
+    }
+  }, [floor, addDebugLog]);
+
+  const regenMap = useCallback(() => {
+    const newBoard = generateBoard(floor);
+    setBoard(newBoard);
+    addDebugLog(`重新生成地图 (B${floor}F)`);
+  }, [floor, addDebugLog]);
+
+  const toggleRevealAll = useCallback(() => {
+    setRevealAllRooms((prev) => !prev);
+    setBoard((prev) => prev.map((r) => ({ ...r, revealed: !revealAllRooms ? true : r.type === "start" })));
+    addDebugLog(revealAllRooms ? "已隐藏所有房间" : "已显示所有房间");
+  }, [revealAllRooms, addDebugLog]);
+
+  const displayBoard = useMemo(() => {
+    if (revealAllRooms) {
+      return board.map((r) => ({ ...r, revealed: true }));
+    }
+    return board;
+  }, [board, revealAllRooms]);
+
   const floorCfg: FloorConfig = getFloorConfig(floor);
 
   return (
@@ -945,7 +946,7 @@ export default function App() {
 
       <section className="playground dungeon">
         <div className="board">
-          {board.map((room: Room, idx: number) => {
+          {displayBoard.map((room: Room, idx: number) => {
             const isFlippable = flippable.has(idx) && !room.revealed;
             const canClickExit =
               room.revealed && room.type === "exit" && keys > 0 && canFlip;
@@ -962,6 +963,7 @@ export default function App() {
                   canClickExit ? "can-exit" : "",
                   isDefeated ? "defeated" : "",
                   isDisabled ? "disabled" : "",
+                  revealAllRooms ? "debug-revealed" : "",
                 ]
                   .filter(Boolean)
                   .join(" ")}
@@ -1278,6 +1280,47 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      <button
+        className="debug-toggle"
+        onClick={() => setShowDebugPanel((prev) => !prev)}
+      >
+        🛠 {showDebugPanel ? "隐藏" : "开发"}
+      </button>
+
+      {showDebugPanel && (
+        <section className="debug-panel">
+          <div className="debug-header">
+            <h3>🔧 开发调试面板</h3>
+            <button onClick={() => setShowDebugPanel(false)}>✕</button>
+          </div>
+          <div className="debug-actions">
+            <button onClick={verifyCurrentMap}>验证地图</button>
+            <button onClick={printDebugMap}>打印地图</button>
+            <button onClick={runDiagnostics}>运行诊断</button>
+            <button onClick={regenMap}>重新生成</button>
+            <button onClick={toggleRevealAll}>
+              {revealAllRooms ? "隐藏房间" : "显示所有房间"}
+            </button>
+          </div>
+          <div className="debug-stats">
+            <div>当前楼层: B{floor}F</div>
+            <div>路径上限: {floorCfg.pathMaxDamage} 伤害</div>
+          </div>
+          <div className="debug-log">
+            <div className="debug-log-header">📋 调试日志</div>
+            <div className="debug-log-content">
+              {debugLog.length === 0 ? (
+                <div className="debug-log-empty">暂无日志，点击上方按钮开始调试</div>
+              ) : (
+                debugLog.map((msg, i) => (
+                  <div key={i} className="debug-log-item">{msg}</div>
+                ))
+              )}
+            </div>
+          </div>
+        </section>
       )}
     </main>
   );
