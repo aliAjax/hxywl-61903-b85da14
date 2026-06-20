@@ -440,6 +440,193 @@ export function printMapDebug(
   return lines.join("\n");
 }
 
+export interface FloorDiagResult {
+  floor: number;
+  route: RouteType;
+  successRate: number;
+  avgAttempts: number;
+  medianAttempts: number;
+  avgPathDamage: number;
+  medianPathDamage: number;
+  minPathDamage: number;
+  maxPathDamage: number;
+  pathDamageStdDev: number;
+  commonIssues: Record<string, number>;
+  damageDistribution: number[];
+  attemptDistribution: number[];
+}
+
+export interface DiagOverviewStats {
+  overallSuccessRate: number;
+  avgSuccessRate: number;
+  avgPathDamage: number;
+  avgAttempts: number;
+  totalIterations: number;
+  totalFloors: number;
+  bestFloor: number;
+  worstFloor: number;
+  hardestFloor: number;
+}
+
+export interface DiagReport {
+  floors: FloorDiagResult[];
+  totalIterations: number;
+  elapsed: number;
+  overview: DiagOverviewStats;
+}
+
+export interface DiagProgress {
+  currentFloor: number;
+  currentIteration: number;
+  totalFloors: number;
+  iterationsPerFloor: number;
+  done: boolean;
+}
+
+export type DiagChunkResult = {
+  floor: number;
+  route: RouteType;
+  iteration: number;
+  result: GenerationResult;
+};
+
+export function runSingleDiagIteration(floor: number, route: RouteType): GenerationResult {
+  return generateMap(floor, route);
+}
+
+function calcMedian(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function calcStdDev(values: number[], mean: number): number {
+  if (values.length === 0) return 0;
+  const sqDiffs = values.map((v) => Math.pow(v - mean, 2));
+  return Math.sqrt(sqDiffs.reduce((a, b) => a + b, 0) / values.length);
+}
+
+function buildDistribution(values: number[], bins: number = 10): number[] {
+  if (values.length === 0) return new Array(bins).fill(0);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const dist = new Array(bins).fill(0);
+  for (const v of values) {
+    let idx = Math.floor(((v - min) / range) * (bins - 1));
+    idx = Math.max(0, Math.min(bins - 1, idx));
+    dist[idx]++;
+  }
+  return dist;
+}
+
+export function compileDiagChunk(
+  floor: number,
+  route: RouteType,
+  results: GenerationResult[],
+  iterations: number
+): FloorDiagResult {
+  let successCount = 0;
+  let totalAttempts = 0;
+  let totalDamage = 0;
+  let minDmg = Infinity;
+  let maxDmg = -Infinity;
+  const issues: Record<string, number> = {};
+  const allDamages: number[] = [];
+  const allAttempts: number[] = [];
+
+  for (const result of results) {
+    const attempts = result.stats.attempts;
+    const damage = result.stats.totalPathDamage;
+    totalAttempts += attempts;
+    totalDamage += damage;
+    minDmg = Math.min(minDmg, damage);
+    maxDmg = Math.max(maxDmg, damage);
+    allDamages.push(damage);
+    allAttempts.push(attempts);
+    if (result.verification.valid) successCount++;
+    for (const issue of result.verification.issues) {
+      issues[issue] = (issues[issue] || 0) + 1;
+    }
+  }
+
+  const avgDamage = totalDamage / iterations;
+  const avgAttemptsVal = totalAttempts / iterations;
+
+  return {
+    floor,
+    route,
+    successRate: successCount / iterations,
+    avgAttempts: avgAttemptsVal,
+    medianAttempts: calcMedian(allAttempts),
+    avgPathDamage: avgDamage,
+    medianPathDamage: calcMedian(allDamages),
+    minPathDamage: minDmg === Infinity ? 0 : minDmg,
+    maxPathDamage: maxDmg === -Infinity ? 0 : maxDmg,
+    pathDamageStdDev: calcStdDev(allDamages, avgDamage),
+    commonIssues: issues,
+    damageDistribution: buildDistribution(allDamages, 8),
+    attemptDistribution: buildDistribution(allAttempts, 8),
+  };
+}
+
+export function computeDiagOverview(floors: FloorDiagResult[], totalIters: number): DiagOverviewStats {
+  if (floors.length === 0) {
+    return {
+      overallSuccessRate: 0,
+      avgSuccessRate: 0,
+      avgPathDamage: 0,
+      avgAttempts: 0,
+      totalIterations: totalIters,
+      totalFloors: 0,
+      bestFloor: 0,
+      worstFloor: 0,
+      hardestFloor: 0,
+    };
+  }
+
+  let totalSuccessRate = 0;
+  let totalDamage = 0;
+  let totalAttempts = 0;
+  let bestRate = -1;
+  let worstRate = Infinity;
+  let hardestAttempts = -1;
+  let bestFloor = floors[0].floor;
+  let worstFloor = floors[0].floor;
+  let hardestFloor = floors[0].floor;
+
+  for (const f of floors) {
+    totalSuccessRate += f.successRate;
+    totalDamage += f.avgPathDamage;
+    totalAttempts += f.avgAttempts;
+    if (f.successRate > bestRate) {
+      bestRate = f.successRate;
+      bestFloor = f.floor;
+    }
+    if (f.successRate < worstRate) {
+      worstRate = f.successRate;
+      worstFloor = f.floor;
+    }
+    if (f.avgAttempts > hardestAttempts) {
+      hardestAttempts = f.avgAttempts;
+      hardestFloor = f.floor;
+    }
+  }
+
+  return {
+    overallSuccessRate: totalSuccessRate / floors.length,
+    avgSuccessRate: totalSuccessRate / floors.length,
+    avgPathDamage: totalDamage / floors.length,
+    avgAttempts: totalAttempts / floors.length,
+    totalIterations: totalIters,
+    totalFloors: floors.length,
+    bestFloor,
+    worstFloor,
+    hardestFloor,
+  };
+}
+
 export function runGenerationDiagnostics(
   floor: number,
   iterations: number = 100,

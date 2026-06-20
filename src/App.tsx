@@ -24,8 +24,13 @@ import {
   generateMap,
   verifyMap,
   printMapDebug,
-  runGenerationDiagnostics,
+  runSingleDiagIteration,
+  compileDiagChunk,
+  computeDiagOverview,
   GenerationResult,
+  FloorDiagResult,
+  DiagReport,
+  DiagProgress,
 } from "./config/mapGenerator";
 import {
   saveGame,
@@ -397,6 +402,15 @@ export default function App() {
   const [playerCharging, setPlayerCharging] = useState(loadedSave?.playerCharging ?? false);
   const [currentRoute, setCurrentRoute] = useState<RouteType>(loadedSave?.currentRoute ?? null);
   const [showRouteSelect, setShowRouteSelect] = useState(false);
+  const [diagFloorFrom, setDiagFloorFrom] = useState(1);
+  const [diagFloorTo, setDiagFloorTo] = useState(10);
+  const [diagIterations, setDiagIterations] = useState(50);
+  const [diagRunning, setDiagRunning] = useState(false);
+  const [diagProgress, setDiagProgress] = useState<DiagProgress | null>(null);
+  const [diagReport, setDiagReport] = useState<DiagReport | null>(null);
+  const [diagExpandedFloor, setDiagExpandedFloor] = useState<number | null>(null);
+  const [diagViewMode, setDiagViewMode] = useState<"overview" | "detail">("overview");
+  const diagRef = useRef<{ cancelled: boolean }>({ cancelled: false });
   const [showSlotPanel, setShowSlotPanel] = useState<"save" | "load" | null>(null);
   const [slotList, setSlotList] = useState<SlotMeta[]>(() => getSlotList());
 
@@ -1315,21 +1329,6 @@ export default function App() {
     mapStr.split("\n").forEach((line) => addDebugLog(line));
   }, [board, addDebugLog]);
 
-  const runDiagnostics = useCallback(() => {
-    addDebugLog("开始运行生成诊断（100次迭代）...");
-    const diag = runGenerationDiagnostics(floor, 100, currentRoute);
-    addDebugLog(`成功率: ${(diag.successRate * 100).toFixed(1)}%`);
-    addDebugLog(`平均尝试次数: ${diag.avgAttempts.toFixed(2)}`);
-    addDebugLog(`平均路径伤害: ${diag.avgPathDamage.toFixed(2)}`);
-    addDebugLog(`伤害范围: ${diag.minPathDamage} ~ ${diag.maxPathDamage}`);
-    if (Object.keys(diag.commonIssues).length > 0) {
-      addDebugLog("常见问题:");
-      Object.entries(diag.commonIssues).forEach(([issue, count]) => {
-        addDebugLog(`  - ${issue}: ${count}次`);
-      });
-    }
-  }, [floor, currentRoute, addDebugLog]);
-
   const regenMap = useCallback(() => {
     const newBoard = generateBoard(floor, currentRoute);
     setBoard(newBoard);
@@ -1341,6 +1340,114 @@ export default function App() {
     setBoard((prev) => prev.map((r) => ({ ...r, revealed: !revealAllRooms ? true : r.type === "start" })));
     addDebugLog(revealAllRooms ? "已隐藏所有房间" : "已显示所有房间");
   }, [revealAllRooms, addDebugLog]);
+
+  const startDiagRun = useCallback(() => {
+    if (diagRunning) return;
+    const from = Math.max(1, diagFloorFrom);
+    const to = Math.max(from, diagFloorTo);
+    const iters = Math.max(1, Math.min(500, diagIterations));
+    const totalFloors = to - from + 1;
+    const route = currentRoute;
+
+    diagRef.current = { cancelled: false };
+    setDiagRunning(true);
+    setDiagReport(null);
+    setDiagExpandedFloor(null);
+    setDiagProgress({
+      currentFloor: from,
+      currentIteration: 0,
+      totalFloors,
+      iterationsPerFloor: iters,
+      done: false,
+    });
+
+    const startTime = Date.now();
+    const allResults: FloorDiagResult[] = [];
+    let currentFloorIdx = 0;
+
+    const scheduleWork = (fn: () => void) => {
+      if (typeof requestIdleCallback !== "undefined") {
+        const handle = requestIdleCallback(
+          () => {
+            fn();
+          },
+          { timeout: 50 }
+        );
+        return () => cancelIdleCallback(handle);
+      } else {
+        const handle = setTimeout(fn, 0);
+        return () => clearTimeout(handle);
+      }
+    };
+
+    let cancelScheduled: (() => void) | null = null;
+
+    const processFloor = () => {
+      if (diagRef.current.cancelled) {
+        setDiagRunning(false);
+        setDiagProgress((p) => (p ? { ...p, done: true } : null));
+        return;
+      }
+
+      const floor = from + currentFloorIdx;
+      const chunkResults: GenerationResult[] = [];
+      let iterDone = 0;
+
+      const processBatch = () => {
+        if (diagRef.current.cancelled) {
+          setDiagRunning(false);
+          return;
+        }
+        const batchSize = Math.min(3, iters - iterDone);
+        let batchDone = 0;
+        try {
+          while (batchDone < batchSize && iterDone < iters) {
+            chunkResults.push(runSingleDiagIteration(floor, route));
+            iterDone++;
+            batchDone++;
+          }
+        } catch (e) {
+          // ignore
+        }
+
+        setDiagProgress({
+          currentFloor: floor,
+          currentIteration: iterDone,
+          totalFloors,
+          iterationsPerFloor: iters,
+          done: false,
+        });
+
+        if (iterDone < iters) {
+          cancelScheduled = scheduleWork(processBatch);
+        } else {
+          allResults.push(compileDiagChunk(floor, route, chunkResults, iters));
+          currentFloorIdx++;
+          if (currentFloorIdx < totalFloors) {
+            cancelScheduled = scheduleWork(processFloor);
+          } else {
+            const totalIters = totalFloors * iters;
+            setDiagReport({
+              floors: allResults,
+              totalIterations: totalIters,
+              elapsed: Date.now() - startTime,
+              overview: computeDiagOverview(allResults, totalIters),
+            });
+            setDiagProgress((p) => (p ? { ...p, done: true } : null));
+            setDiagRunning(false);
+          }
+        }
+      };
+
+      processBatch();
+    };
+
+    processFloor();
+  }, [diagRunning, diagFloorFrom, diagFloorTo, diagIterations, currentRoute]);
+
+  const cancelDiagRun = useCallback(() => {
+    diagRef.current.cancelled = true;
+  }, []);
 
   const displayBoard = useMemo(() => {
     if (revealAllRooms) {
@@ -1991,7 +2098,6 @@ export default function App() {
           <div className="debug-actions">
             <button onClick={verifyCurrentMap}>验证地图</button>
             <button onClick={printDebugMap}>打印地图</button>
-            <button onClick={runDiagnostics}>运行诊断</button>
             <button onClick={regenMap}>重新生成</button>
             <button onClick={toggleRevealAll}>
               {revealAllRooms ? "隐藏房间" : "显示所有房间"}
@@ -2002,6 +2108,398 @@ export default function App() {
             <div>当前路线: {currentRouteCfg ? `${currentRouteCfg.icon} ${currentRouteCfg.name}` : "无"}</div>
             <div>路径上限: {floorCfg.pathMaxDamage} 伤害</div>
           </div>
+
+          <div className="diag-config">
+            <div className="diag-config-title">📊 诊断报告</div>
+            <div className="diag-config-row">
+              <label>楼层范围</label>
+              <div className="diag-range-inputs">
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={diagFloorFrom}
+                  onChange={(e) => setDiagFloorFrom(Math.max(1, parseInt(e.target.value) || 1))}
+                  disabled={diagRunning}
+                />
+                <span>~</span>
+                <input
+                  type="number"
+                  min={diagFloorFrom}
+                  max={20}
+                  value={diagFloorTo}
+                  onChange={(e) => setDiagFloorTo(Math.max(diagFloorFrom, parseInt(e.target.value) || diagFloorFrom))}
+                  disabled={diagRunning}
+                />
+              </div>
+            </div>
+            <div className="diag-config-row">
+              <label>每层迭代</label>
+              <input
+                type="number"
+                className="diag-iter-input"
+                min={1}
+                max={500}
+                value={diagIterations}
+                onChange={(e) => setDiagIterations(Math.max(1, Math.min(500, parseInt(e.target.value) || 50)))}
+                disabled={diagRunning}
+              />
+            </div>
+            <div className="diag-config-row">
+              <label>路线</label>
+              <span className="diag-route-label">
+                {currentRouteCfg ? `${currentRouteCfg.icon} ${currentRouteCfg.name}` : "默认"}
+              </span>
+            </div>
+            <div className="diag-run-row">
+              {!diagRunning ? (
+                <button className="diag-btn-run" onClick={startDiagRun}>
+                  ▶ 运行诊断
+                </button>
+              ) : (
+                <button className="diag-btn-cancel" onClick={cancelDiagRun}>
+                  ⏹ 取消
+                </button>
+              )}
+            </div>
+          </div>
+
+          {diagRunning && diagProgress && !diagProgress.done && (
+            <div className="diag-progress">
+              <div className="diag-progress-bar">
+                <div
+                  className="diag-progress-fill"
+                  style={{
+                    width: `${(
+                      ((diagProgress.currentFloor - diagFloorFrom) * diagProgress.iterationsPerFloor +
+                        diagProgress.currentIteration) /
+                      (diagProgress.totalFloors * diagProgress.iterationsPerFloor) *
+                      100
+                    ).toFixed(1)}%`,
+                  }}
+                />
+              </div>
+              <div className="diag-progress-text">
+                B{diagProgress.currentFloor}F · {diagProgress.currentIteration}/{diagProgress.iterationsPerFloor}
+              </div>
+            </div>
+          )}
+
+          {diagReport && (
+            <div className="diag-report diag-report-v2">
+              <div className="diag-report-header-v2">
+                <div className="diag-report-title-row">
+                  <span className="diag-report-title">� 开发诊断报告</span>
+                  <span className="diag-report-meta-v2">
+                    {diagReport.totalIterations} 次迭代 · {(diagReport.elapsed / 1000).toFixed(1)}s
+                  </span>
+                </div>
+                <div className="diag-view-tabs">
+                  <button
+                    className={`diag-view-tab ${diagViewMode === "overview" ? "active" : ""}`}
+                    onClick={() => setDiagViewMode("overview")}
+                  >
+                    📈 总览
+                  </button>
+                  <button
+                    className={`diag-view-tab ${diagViewMode === "detail" ? "active" : ""}`}
+                    onClick={() => setDiagViewMode("detail")}
+                  >
+                    📋 详情
+                  </button>
+                </div>
+              </div>
+
+              {diagViewMode === "overview" && diagReport.overview && (
+                <div className="diag-overview-section">
+                  <div className="diag-overview-cards">
+                    <div className="diag-overview-card card-success">
+                      <div className="card-icon">✅</div>
+                      <div className="card-content">
+                        <div className="card-label">总体成功率</div>
+                        <div className="card-value">
+                          {(diagReport.overview.overallSuccessRate * 100).toFixed(1)}%
+                        </div>
+                        <div className="card-sub">
+                          最佳 B{diagReport.overview.bestFloor}F · 最差 B{diagReport.overview.worstFloor}F
+                        </div>
+                      </div>
+                    </div>
+                    <div className="diag-overview-card card-damage">
+                      <div className="card-icon">⚡</div>
+                      <div className="card-content">
+                        <div className="card-label">平均路径伤害</div>
+                        <div className="card-value">
+                          {diagReport.overview.avgPathDamage.toFixed(2)}
+                        </div>
+                        <div className="card-sub">跨 {diagReport.overview.totalFloors} 层平均</div>
+                      </div>
+                    </div>
+                    <div className="diag-overview-card card-attempts">
+                      <div className="card-icon">🔄</div>
+                      <div className="card-content">
+                        <div className="card-label">平均生成尝试</div>
+                        <div className="card-value">
+                          {diagReport.overview.avgAttempts.toFixed(2)}
+                        </div>
+                        <div className="card-sub">最难 B{diagReport.overview.hardestFloor}F</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="diag-trend-section">
+                    <div className="diag-chart-title-v2">📉 成功率趋势</div>
+                    <div className="diag-trend-chart">
+                      <div className="trend-y-axis">
+                        <span>100%</span>
+                        <span>50%</span>
+                        <span>0%</span>
+                      </div>
+                      <div className="trend-content">
+                        <svg
+                          className="trend-svg"
+                          viewBox={`0 0 ${diagReport.floors.length * 60} 100`}
+                          preserveAspectRatio="none"
+                        >
+                          <polyline
+                            fill="none"
+                            stroke="url(#successGradient)"
+                            strokeWidth="2"
+                            points={diagReport.floors
+                              .map((f, i) => `${i * 60 + 30},${100 - f.successRate * 100}`)
+                              .join(" ")}
+                          />
+                          <defs>
+                            <linearGradient id="successGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                              <stop offset="0%" stopColor="#4ade80" />
+                              <stop offset="100%" stopColor="#22c55e" />
+                            </linearGradient>
+                          </defs>
+                          {diagReport.floors.map((f, i) => (
+                            <circle
+                              key={f.floor}
+                              cx={i * 60 + 30}
+                              cy={100 - f.successRate * 100}
+                              r="3"
+                              fill="#4ade80"
+                            />
+                          ))}
+                        </svg>
+                        <div className="trend-x-axis">
+                          {diagReport.floors.map((f) => (
+                            <span key={f.floor} className="trend-x-label">
+                              B{f.floor}F
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="diag-compare-section">
+                    <div className="diag-chart-title-v2">📊 楼层指标对比</div>
+                    <div className="diag-compare-bars">
+                      {diagReport.floors.map((fr) => {
+                        const maxDmg = Math.max(...diagReport.floors.map((f) => f.avgPathDamage), 1);
+                        const maxAtt = Math.max(...diagReport.floors.map((f) => f.avgAttempts), 1);
+                        const isExpanded = diagExpandedFloor === fr.floor;
+                        return (
+                          <div
+                            key={fr.floor}
+                            className={`diag-compare-row ${isExpanded ? "expanded" : ""}`}
+                            onClick={() => setDiagExpandedFloor(isExpanded ? null : fr.floor)}
+                          >
+                            <div className="compare-main">
+                              <span className="compare-floor">B{fr.floor}F</span>
+                              <div className="compare-bars">
+                                <div className="compare-bar-group">
+                                  <div
+                                    className="compare-bar compare-bar-success"
+                                    style={{ width: `${fr.successRate * 100}%` }}
+                                    title={`成功率: ${(fr.successRate * 100).toFixed(1)}%`}
+                                  />
+                                  <span className="compare-bar-label">
+                                    {(fr.successRate * 100).toFixed(0)}%
+                                  </span>
+                                </div>
+                                <div className="compare-bar-group">
+                                  <div
+                                    className="compare-bar compare-bar-damage"
+                                    style={{ width: `${(fr.avgPathDamage / maxDmg) * 100}%` }}
+                                    title={`平均伤害: ${fr.avgPathDamage.toFixed(2)}`}
+                                  />
+                                  <span className="compare-bar-label">
+                                    {fr.avgPathDamage.toFixed(1)}
+                                  </span>
+                                </div>
+                                <div className="compare-bar-group">
+                                  <div
+                                    className="compare-bar compare-bar-attempts"
+                                    style={{ width: `${(fr.avgAttempts / maxAtt) * 100}%` }}
+                                    title={`平均尝试: ${fr.avgAttempts.toFixed(2)}`}
+                                  />
+                                  <span className="compare-bar-label">
+                                    {fr.avgAttempts.toFixed(1)}
+                                  </span>
+                                </div>
+                              </div>
+                              <span className="expand-icon">{isExpanded ? "▲" : "▼"}</span>
+                            </div>
+                            {isExpanded && (
+                              <div className="compare-detail">
+                                <div className="detail-grid">
+                                  <div className="detail-item">
+                                    <span className="detail-label">成功率</span>
+                                    <span className={`detail-value ${fr.successRate >= 0.9 ? "good" : fr.successRate >= 0.5 ? "warn" : "bad"}`}>
+                                      {(fr.successRate * 100).toFixed(1)}%
+                                    </span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">平均伤害</span>
+                                    <span className="detail-value">{fr.avgPathDamage.toFixed(2)}</span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">中位伤害</span>
+                                    <span className="detail-value">{fr.medianPathDamage.toFixed(2)}</span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">伤害范围</span>
+                                    <span className="detail-value">{fr.minPathDamage} ~ {fr.maxPathDamage}</span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">标准差</span>
+                                    <span className="detail-value">±{fr.pathDamageStdDev.toFixed(2)}</span>
+                                  </div>
+                                  <div className="detail-item">
+                                    <span className="detail-label">平均尝试</span>
+                                    <span className="detail-value">{fr.avgAttempts.toFixed(2)}</span>
+                                  </div>
+                                </div>
+                                <div className="detail-distribution">
+                                  <div className="dist-title">伤害分布</div>
+                                  <div className="dist-bars">
+                                    {fr.damageDistribution.map((count, i) => {
+                                      const maxCount = Math.max(...fr.damageDistribution, 1);
+                                      return (
+                                        <div key={i} className="dist-bar-wrapper">
+                                          <div
+                                            className="dist-bar"
+                                            style={{ height: `${(count / maxCount) * 100}%` }}
+                                          />
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                                {Object.keys(fr.commonIssues).length > 0 && (
+                                  <div className="detail-issues">
+                                    <div className="issues-title">常见问题</div>
+                                    <div className="issues-list">
+                                      {Object.entries(fr.commonIssues)
+                                        .sort((a, b) => b[1] - a[1])
+                                        .slice(0, 5)
+                                        .map(([issue, count]) => (
+                                          <div key={issue} className="issue-item">
+                                            <span className="issue-name">{issue}</span>
+                                            <span className="issue-count">{count}次</span>
+                                          </div>
+                                        ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {diagViewMode === "detail" && (
+                <div className="diag-detail-section">
+                  <div className="diag-detail-table-v2">
+                    <div className="detail-table-header">
+                      <span>楼层</span>
+                      <span>成功率</span>
+                      <span>平均伤害</span>
+                      <span>中位伤害</span>
+                      <span>伤害范围</span>
+                      <span>平均尝试</span>
+                    </div>
+                    {diagReport.floors.map((fr) => (
+                      <div key={fr.floor} className="detail-table-row">
+                        <span className="floor-cell">B{fr.floor}F</span>
+                        <span className={fr.successRate >= 0.9 ? "val-good" : fr.successRate >= 0.5 ? "val-warn" : "val-bad"}>
+                          {(fr.successRate * 100).toFixed(1)}%
+                        </span>
+                        <span>{fr.avgPathDamage.toFixed(2)}</span>
+                        <span>{fr.medianPathDamage.toFixed(2)}</span>
+                        <span>{fr.minPathDamage}~{fr.maxPathDamage}</span>
+                        <span>{fr.avgAttempts.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="diag-issues-summary">
+                    <div className="diag-chart-title-v2">⚠️ 全楼层失败原因汇总</div>
+                    <div className="issues-summary-list">
+                      {(() => {
+                        const allIssues: Record<string, number> = {};
+                        for (const f of diagReport.floors) {
+                          for (const [issue, count] of Object.entries(f.commonIssues)) {
+                            allIssues[issue] = (allIssues[issue] || 0) + count;
+                          }
+                        }
+                        const totalIssues = Object.values(allIssues).reduce((a, b) => a + b, 0);
+                        return Object.entries(allIssues)
+                          .sort((a, b) => b[1] - a[1])
+                          .slice(0, 8)
+                          .map(([issue, count]) => (
+                            <div key={issue} className="issue-summary-item">
+                              <div className="issue-summary-header">
+                                <span className="issue-summary-name">{issue}</span>
+                                <span className="issue-summary-count">{count}次</span>
+                              </div>
+                              <div className="issue-summary-bar">
+                                <div
+                                  className="issue-summary-fill"
+                                  style={{ width: `${totalIssues > 0 ? (count / totalIssues) * 100 : 0}%` }}
+                                />
+                              </div>
+                            </div>
+                          ));
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="diag-report-actions">
+                <button
+                  className="diag-action-btn"
+                  onClick={() => {
+                    const jsonStr = JSON.stringify(diagReport, null, 2);
+                    navigator.clipboard?.writeText(jsonStr).then(
+                      () => addDebugLog("✅ 诊断报告已复制到剪贴板"),
+                      () => addDebugLog("❌ 复制失败，请手动复制")
+                    );
+                  }}
+                >
+                  📋 复制报告
+                </button>
+                <button
+                  className="diag-action-btn"
+                  onClick={startDiagRun}
+                  disabled={diagRunning}
+                >
+                  🔄 重新运行
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="debug-log">
             <div className="debug-log-header">📋 调试日志</div>
             <div className="debug-log-content">
