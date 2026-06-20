@@ -2189,7 +2189,7 @@ export default function App() {
             <div className="diag-report diag-report-v2">
               <div className="diag-report-header-v2">
                 <div className="diag-report-title-row">
-                  <span className="diag-report-title">� 开发诊断报告</span>
+                  <span className="diag-report-title">📊 开发诊断报告</span>
                   <span className="diag-report-meta-v2">
                     {diagReport.totalIterations} 次迭代 · {(diagReport.elapsed / 1000).toFixed(1)}s
                   </span>
