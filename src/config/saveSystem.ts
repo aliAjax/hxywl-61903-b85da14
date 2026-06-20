@@ -66,6 +66,7 @@ export interface SaveData {
   battleRoomIdx: number;
   history: SavedTurnRecord[];
   showRouteHint?: boolean;
+  playerCharging?: boolean;
 }
 
 export interface LoadResult {
@@ -188,6 +189,10 @@ export function validateSaveData(data: unknown): { valid: boolean; save: SaveDat
     return { valid: false, save: null, reason: "战斗状态异常" };
   }
 
+  if (data.playerCharging !== undefined && typeof data.playerCharging !== "boolean") {
+    return { valid: false, save: null, reason: "蓄力状态数据异常" };
+  }
+
   const expectedCells = GAME_CONSTANTS.boardSize * GAME_CONSTANTS.boardSize;
   if (!Array.isArray(data.board) || (data.board as unknown[]).length !== expectedCells) {
     return { valid: false, save: null, reason: "地图数据异常" };
@@ -236,6 +241,7 @@ function resetBattleState(save: SaveData): void {
   save.currentMonster = null;
   save.battleLog = [];
   save.battleRoomIdx = -1;
+  save.playerCharging = false;
 }
 
 function resetBattleRoom(save: SaveData): void {

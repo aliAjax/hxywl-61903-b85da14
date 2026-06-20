@@ -1291,6 +1291,18 @@ button {
   font-weight: 600;
 }
 
+.charging-indicator {
+  color: #facc15;
+  font-weight: 800;
+  animation: pulse-charge 1s ease-in-out infinite;
+  text-shadow: 0 0 8px rgba(250, 204, 21, 0.6);
+}
+
+@keyframes pulse-charge {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.1); opacity: 1; }
+}
+
 .vs-divider {
   font-weight: 900;
   font-size: 20px;
@@ -1383,7 +1395,7 @@ button {
 
 .battle-actions {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
 }
 
@@ -1415,6 +1427,16 @@ button {
 
 .btn-attack:hover:not(:disabled) {
   box-shadow: 0 6px 20px rgba(220, 38, 38, 0.45);
+}
+
+.btn-charge {
+  background: linear-gradient(135deg, #facc15, #eab308);
+  box-shadow: 0 4px 16px rgba(250, 204, 21, 0.3);
+  color: #0f172a;
+}
+
+.btn-charge:hover:not(:disabled) {
+  box-shadow: 0 6px 20px rgba(250, 204, 21, 0.5);
 }
 
 .btn-potion-battle {

@@ -384,6 +384,7 @@ export default function App() {
   const [revealAllRooms, setRevealAllRooms] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
   const [showRouteHint, setShowRouteHint] = useState(loadedSave?.showRouteHint ?? false);
+  const [playerCharging, setPlayerCharging] = useState(loadedSave?.playerCharging ?? false);
 
   const saveRestoredRef = useRef(!!loadedSave);
   const frozenRouteHintRef = useRef<Set<number>>(new Set());
@@ -428,8 +429,9 @@ export default function App() {
       battleRoomIdx,
       history,
       showRouteHint,
+      playerCharging,
     });
-  }, [board, hp, coins, keys, potions, floor, status, turn, stats, battleState, currentMonster, battleLog, battleRoomIdx, history, showSettlement, showRouteHint]);
+  }, [board, hp, coins, keys, potions, floor, status, turn, stats, battleState, currentMonster, battleLog, battleRoomIdx, history, showSettlement, showRouteHint, playerCharging]);
 
   const flippable = useMemo(() => {
     if (battleState !== "idle") return new Set<number>();
@@ -549,6 +551,7 @@ export default function App() {
         setCurrentMonster(monster);
         setBattleRoomIdx(idx);
         setBattleState("fighting");
+        setPlayerCharging(false);
         setBattleLog([
           createBattleLog(`遭遇了 ${monster.icon} ${monster.name}！`, "system"),
           createBattleLog(`怪物HP: ${monster.hp}/${monster.maxHp}，攻击力: ${monster.attack}`, "system"),
@@ -734,6 +737,7 @@ export default function App() {
     setCurrentMonster(null);
     setBattleLog([]);
     setBattleRoomIdx(-1);
+    setPlayerCharging(false);
     setHistory([
       {
         id: ++recordIdCounter,
@@ -759,6 +763,7 @@ export default function App() {
     setCurrentMonster(null);
     setBattleLog([]);
     setBattleRoomIdx(-1);
+    setPlayerCharging(false);
     setHistory((prev: TurnRecord[]) => [
       {
         id: ++recordIdCounter,
@@ -845,6 +850,7 @@ export default function App() {
       let finalFleeDamage = 0;
 
       setBattleState(result);
+      setPlayerCharging(false);
 
       if (result === "won" && finalMonster) {
         const gotPotion = Math.random() < finalMonster.potionDropChance;
@@ -955,13 +961,21 @@ export default function App() {
   const battleAttack = useCallback(() => {
     if (battleState !== "fighting" || !currentMonster) return;
 
-    const playerDamage = BATTLE_CONFIG.playerDamageMin + Math.floor(Math.random() * (BATTLE_CONFIG.playerDamageMax - BATTLE_CONFIG.playerDamageMin + 1));
+    let baseDamage = BATTLE_CONFIG.playerDamageMin + Math.floor(Math.random() * (BATTLE_CONFIG.playerDamageMax - BATTLE_CONFIG.playerDamageMin + 1));
+    let playerDamage = baseDamage;
+    const newLogs: BattleLog[] = [];
+
+    if (playerCharging) {
+      playerDamage = baseDamage * BATTLE_CONFIG.chargeDamageMultiplier;
+      newLogs.push(createBattleLog(EVENT_MESSAGES.playerChargeReleaseLog(BATTLE_CONFIG.chargeDamageMultiplier), "player"));
+      newLogs.push(createBattleLog(EVENT_MESSAGES.playerChargedAttack(playerDamage), "player"));
+      setPlayerCharging(false);
+    } else {
+      newLogs.push(createBattleLog(EVENT_MESSAGES.playerAttack(playerDamage), "player"));
+    }
+
     const newMonsterHp = Math.max(0, currentMonster.hp - playerDamage);
     const updatedMonster = { ...currentMonster, hp: newMonsterHp };
-
-    const newLogs: BattleLog[] = [
-      createBattleLog(EVENT_MESSAGES.playerAttack(playerDamage), "player"),
-    ];
 
     if (newMonsterHp <= 0) {
       newLogs.push(createBattleLog(EVENT_MESSAGES.monsterDefeatedLog(currentMonster), "system"));
@@ -989,7 +1003,41 @@ export default function App() {
       }
       return newHp;
     });
-  }, [battleState, currentMonster, endBattle]);
+  }, [battleState, currentMonster, endBattle, playerCharging]);
+
+  const battleCharge = useCallback(() => {
+    if (battleState !== "fighting" || !currentMonster) return;
+
+    if (playerCharging) {
+      setBattleLog((prev) => [
+        ...prev,
+        createBattleLog("❌ 你已经在蓄力中了！", "system"),
+      ]);
+      return;
+    }
+
+    setPlayerCharging(true);
+
+    const newLogs: BattleLog[] = [
+      createBattleLog(EVENT_MESSAGES.playerChargeLog, "player"),
+    ];
+
+    const monsterDamage = currentMonster.attack;
+    newLogs.push(
+      createBattleLog(EVENT_MESSAGES.monsterAttack(currentMonster, monsterDamage), "monster")
+    );
+
+    setBattleLog((prev) => [...prev, ...newLogs]);
+    setHp((h) => {
+      const newHp = Math.max(0, h - monsterDamage);
+      if (newHp <= 0) {
+        setTimeout(() => {
+          endBattle("lost", currentMonster, 1500);
+        }, 500);
+      }
+      return newHp;
+    });
+  }, [battleState, currentMonster, endBattle, playerCharging]);
 
   const battleUsePotion = useCallback(() => {
     if (battleState !== "fighting") return;
@@ -1055,6 +1103,7 @@ export default function App() {
     setCurrentMonster(null);
     setBattleLog([]);
     setBattleRoomIdx(-1);
+    setPlayerCharging(false);
   }, [battleState]);
 
   const settlementData = useMemo(() => {
@@ -1433,6 +1482,7 @@ export default function App() {
                 </div>
                 <div className="combatant-info">
                   <span>🧪 × {potions}</span>
+                  {playerCharging && <span className="charging-indicator" title="下次攻击伤害翻倍">⚡ 蓄力中</span>}
                 </div>
               </div>
 
@@ -1469,7 +1519,15 @@ export default function App() {
             {battleState === "fighting" ? (
               <div className="battle-actions">
                 <button className="btn-attack" onClick={battleAttack}>
-                  ⚔️ 攻击
+                  {playerCharging ? "💥 释放蓄力攻击" : "⚔️ 攻击"}
+                </button>
+                <button
+                  className={["btn-charge", playerCharging ? "btn-disabled" : ""].filter(Boolean).join(" ")}
+                  onClick={battleCharge}
+                  disabled={playerCharging}
+                  title="本回合不造成伤害，下次攻击伤害翻倍"
+                >
+                  ⚡ 蓄力攻击
                 </button>
                 <button
                   className={["btn-potion-battle", potions <= 0 || hp >= MAX_HP ? "btn-disabled" : ""].filter(Boolean).join(" ")}

@@ -83,6 +83,7 @@ export interface BattleConfig {
   potionHeal: number;
   fleeSuccessRate: number;
   fleeSuccessDamage: number;
+  chargeDamageMultiplier: number;
 }
 
 export interface EventMessages {
@@ -102,6 +103,7 @@ export interface EventMessages {
   flee: (damage: number) => string;
   potionUse: (heal: number) => string;
   playerAttack: (damage: number) => string;
+  playerChargedAttack: (damage: number) => string;
   monsterAttack: (monster: Monster, damage: number) => string;
   monsterDefeatedLog: (monster: Monster) => string;
   battleReward: (coins: number, gotPotion: boolean) => string;
@@ -112,6 +114,8 @@ export interface EventMessages {
   hpFullLog: string;
   roomResetLog: string;
   playerDeathLog: string;
+  playerChargeLog: string;
+  playerChargeReleaseLog: (multiplier: number) => string;
 }
 
 export const GAME_CONSTANTS: GameConstants = {
@@ -179,6 +183,7 @@ export const BATTLE_CONFIG: BattleConfig = {
   potionHeal: 2,
   fleeSuccessRate: 0.7,
   fleeSuccessDamage: 1,
+  chargeDamageMultiplier: 2,
 };
 
 export const EVENT_MESSAGES: EventMessages = {
@@ -200,6 +205,7 @@ export const EVENT_MESSAGES: EventMessages = {
   flee: (damage) => `🏃 逃跑！受到 ${damage} 点伤害，房间恢复危险状态`,
   potionUse: (heal) => `🧪 使用药水，恢复${heal}点血量`,
   playerAttack: (damage) => `你挥剑攻击，造成 ${damage} 点伤害！`,
+  playerChargedAttack: (damage) => `💥 蓄力攻击释放！造成 ${damage} 点伤害！`,
   monsterAttack: (m, damage) => `${m.icon} ${m.name} 反击，造成 ${damage} 点伤害！`,
   monsterDefeatedLog: (m) => `${m.icon} ${m.name} 被击败了！`,
   battleReward: (coins, gotPotion) =>
@@ -211,6 +217,8 @@ export const EVENT_MESSAGES: EventMessages = {
   hpFullLog: "❌ 血量已满，无需使用药水",
   roomResetLog: "房间恢复为危险状态，仍需小心应对",
   playerDeathLog: "💀 失血过多，倒下了...",
+  playerChargeLog: "⚡ 你开始蓄力，下次攻击伤害将大幅提升！",
+  playerChargeReleaseLog: (multiplier) => `⚡ 蓄力释放！伤害 ${multiplier} 倍！`,
 };
 
 export function getTotalCells(): number {
