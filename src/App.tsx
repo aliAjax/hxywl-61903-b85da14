@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import {
   GAME_CONSTANTS,
@@ -24,6 +24,12 @@ import {
   runGenerationDiagnostics,
   GenerationResult,
 } from "./config/mapGenerator";
+import {
+  saveGame,
+  loadGame,
+  clearSave,
+  SaveData,
+} from "./config/saveSystem";
 
 const SIZE = GAME_CONSTANTS.boardSize;
 const TOTAL = getTotalCells();
@@ -98,6 +104,21 @@ function createBattleLog(message: string, type: BattleLog["type"]): BattleLog {
 }
 
 let recordIdCounter = 0;
+
+function restoreCounters(history: TurnRecord[], battleLog: BattleLog[]): void {
+  let maxRecord = 0;
+  for (const r of history) {
+    if (r.id > maxRecord) maxRecord = r.id;
+  }
+  let maxBattleLog = 0;
+  for (const l of battleLog) {
+    if (l.id > maxBattleLog) maxBattleLog = l.id;
+  }
+  recordIdCounter = maxRecord;
+  battleLogIdCounter = maxBattleLog;
+}
+
+const loadedSave: SaveData | null = loadGame();
 
 function loadHighScore(): HighScore {
   try {
@@ -204,39 +225,88 @@ const INITIAL_STATS: GameStats = {
 };
 
 export default function App() {
-  const initialFloor = 1;
-  const [board, setBoard] = useState<Room[]>(() => generateBoard(initialFloor));
-  const [hp, setHp] = useState(MAX_HP);
-  const [coins, setCoins] = useState(0);
-  const [keys, setKeys] = useState(0);
-  const [potions, setPotions] = useState(0);
+  const initialFloor = loadedSave?.floor ?? 1;
+  const [board, setBoard] = useState<Room[]>(() =>
+    loadedSave ? loadedSave.board : generateBoard(initialFloor)
+  );
+  const [hp, setHp] = useState(loadedSave?.hp ?? MAX_HP);
+  const [coins, setCoins] = useState(loadedSave?.coins ?? 0);
+  const [keys, setKeys] = useState(loadedSave?.keys ?? 0);
+  const [potions, setPotions] = useState(loadedSave?.potions ?? 0);
   const [floor, setFloor] = useState(initialFloor);
-  const [status, setStatus] = useState<"playing" | "won" | "lost">("playing");
-  const [turn, setTurn] = useState(0);
-  const [stats, setStats] = useState<GameStats>(INITIAL_STATS);
+  const [status, setStatus] = useState<"playing" | "won" | "lost">(loadedSave?.status ?? "playing");
+  const [turn, setTurn] = useState(loadedSave?.turn ?? 0);
+  const [stats, setStats] = useState<GameStats>(loadedSave?.stats ?? INITIAL_STATS);
   const [showSettlement, setShowSettlement] = useState(false);
   const [settlementResult, setSettlementResult] = useState<GameResultType | null>(null);
   const [highScore, setHighScore] = useState<HighScore>(() => loadHighScore());
-  const [battleState, setBattleState] = useState<BattleState>("idle");
-  const [currentMonster, setCurrentMonster] = useState<Monster | null>(null);
-  const [battleLog, setBattleLog] = useState<BattleLog[]>([]);
-  const [battleRoomIdx, setBattleRoomIdx] = useState<number>(-1);
+  const [battleState, setBattleState] = useState<BattleState>(loadedSave?.battleState ?? "idle");
+  const [currentMonster, setCurrentMonster] = useState<Monster | null>(loadedSave?.currentMonster ?? null);
+  const [battleLog, setBattleLog] = useState<BattleLog[]>(loadedSave?.battleLog ?? []);
+  const [battleRoomIdx, setBattleRoomIdx] = useState(loadedSave?.battleRoomIdx ?? -1);
   const [brokeFloorRecord, setBrokeFloorRecord] = useState(false);
   const [brokeCoinRecord, setBrokeCoinRecord] = useState(false);
-  const [history, setHistory] = useState<TurnRecord[]>([
-    {
-      id: ++recordIdCounter,
-      turn: 0,
-      floor: initialFloor,
-      event: `🏠 游戏开始！进入B${initialFloor}F，翻开相邻房间探索地牢`,
-      hpDelta: 0,
-      coinDelta: 0,
-      items: [],
-    },
-  ]);
+  const [history, setHistory] = useState<TurnRecord[]>(() => {
+    if (loadedSave?.history) {
+      restoreCounters(loadedSave.history, loadedSave.battleLog);
+      return loadedSave.history;
+    }
+    return [
+      {
+        id: ++recordIdCounter,
+        turn: 0,
+        floor: initialFloor,
+        event: `🏠 游戏开始！进入B${initialFloor}F，翻开相邻房间探索地牢`,
+        hpDelta: 0,
+        coinDelta: 0,
+        items: [],
+      },
+    ];
+  });
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [debugLog, setDebugLog] = useState<string[]>([]);
   const [revealAllRooms, setRevealAllRooms] = useState(false);
+
+  const saveRestoredRef = useRef(!!loadedSave);
+
+  useEffect(() => {
+    if (saveRestoredRef.current) {
+      const restoredFloor = loadedSave!.floor;
+      setHistory((prev) => [
+        {
+          id: ++recordIdCounter,
+          turn: 0,
+          floor: restoredFloor,
+          event: "💾 已恢复上次存档，继续探索！",
+          hpDelta: 0,
+          coinDelta: 0,
+          items: [],
+        },
+        ...prev,
+      ]);
+      saveRestoredRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (showSettlement) return;
+    saveGame({
+      board,
+      hp,
+      coins,
+      keys,
+      potions,
+      floor,
+      status,
+      turn,
+      stats,
+      battleState,
+      currentMonster,
+      battleLog,
+      battleRoomIdx,
+      history,
+    });
+  }, [board, hp, coins, keys, potions, floor, status, turn, stats, battleState, currentMonster, battleLog, battleRoomIdx, history, showSettlement]);
 
   const flippable = useMemo(() => {
     if (battleState !== "idle") return new Set<number>();
@@ -499,6 +569,7 @@ export default function App() {
   }, [status, floor, coins, stats, hp, triggerSettlement]);
 
   const doResetGame = useCallback(() => {
+    clearSave();
     const newFloor = 1;
     setBoard(generateBoard(newFloor));
     setHp(MAX_HP);
