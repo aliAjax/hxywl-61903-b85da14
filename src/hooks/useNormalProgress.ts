@@ -637,7 +637,7 @@ export function useNormalProgress({ showSettlement }: UseNormalProgressOptions) 
       const syntheticEvents = generateEventHistoryFromLegacySave(loadedSave);
       store.loadFromSave(syntheticEvents);
     } else {
-      const layout = generateMap(initialFloor, null).rooms;
+      const layout = getBoardLayout(board);
       store.push({
         type: "GAME_INIT",
         floor: initialFloor,
