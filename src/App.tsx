@@ -1041,8 +1041,7 @@ export default function App() {
 
   const toggleRevealAll = useCallback(() => {
     setRevealAllRooms((prev) => !prev);
-    setBoard((prev) => prev.map((r) => ({ ...r, revealed: !revealAllRooms ? true : r.type === "start" })));
-    addDebugLog(revealAllRooms ? "已隐藏所有房间" : "已显示所有房间");
+    addDebugLog(!revealAllRooms ? "已显示所有房间（调试）" : "已隐藏所有房间（调试）");
   }, [revealAllRooms, addDebugLog]);
 
   const startDiagRun = useCallback(() => {
@@ -1212,7 +1211,8 @@ export default function App() {
 
       <section className="playground dungeon">
         <div className="board">
-          {displayBoard.map((room: Room, idx: number) => {
+          {displayBoard.map((displayRoom: Room, idx: number) => {
+            const room = board[idx];
             const isFlippable = flippable.has(idx) && !room.revealed;
             const hintCells = battleState !== "idle" || showSettlement
               ? frozenRouteHintRef.current
@@ -1221,7 +1221,7 @@ export default function App() {
             const showFlippableHighlight = isFlippable && !showRouteHint;
             const canClickExit =
               room.revealed && room.type === "exit" && keys > 0 && canFlip;
-            const isDefeated = room.type === "monster" && room.defeated;
+            const isDefeated = displayRoom.type === "monster" && displayRoom.defeated;
             const isDisabled = !canFlip && !room.revealed;
             const risk = riskEstimates[idx];
             const showRisk = showRiskHint && !room.revealed && risk;
@@ -1231,8 +1231,8 @@ export default function App() {
                 key={idx}
                 className={[
                   "cell",
-                  room.type,
-                  room.revealed ? "revealed" : "",
+                  displayRoom.type,
+                  displayRoom.revealed ? "revealed" : "",
                   showFlippableHighlight ? "flippable" : "",
                   isRouteHint ? "route-hint" : "",
                   riskClass,
@@ -1245,10 +1245,10 @@ export default function App() {
                   .join(" ")}
                 onClick={() => flip(idx)}
               >
-                {room.revealed
+                {displayRoom.revealed
                   ? isDefeated
                     ? "💀"
-                    : SYMBOLS[room.type as keyof typeof SYMBOLS]
+                    : SYMBOLS[displayRoom.type as keyof typeof SYMBOLS]
                   : showRisk
                     ? <span className="risk-indicator">
                         <span className="risk-icon">{getRiskIcon(risk.level)}</span>
