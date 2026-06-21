@@ -17,7 +17,9 @@ function makeRooms(overrides: Partial<Record<number, { type: RoomType; revealed:
   }));
   rooms[0] = { type: "start", revealed: true };
   for (const [idx, val] of Object.entries(overrides)) {
-    rooms[Number(idx)] = val;
+    if (val) {
+      rooms[Number(idx)] = val;
+    }
   }
   return rooms;
 }
