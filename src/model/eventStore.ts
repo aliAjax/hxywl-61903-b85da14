@@ -486,6 +486,36 @@ export class EventStore {
     const eventsUpTo = this.events.slice(0, index);
     return rebuildState(eventsUpTo);
   }
+
+  getFloorBoundaries(): FloorBoundary[] {
+    return getFloorBoundaries(this.events);
+  }
+
+  getFloorEvents(floorNum: number): GameEvent[] {
+    return getFloorEvents(this.events, floorNum);
+  }
+
+  rebuildFloorState(floorNum: number): ReturnType<typeof rebuildFloorState> {
+    return rebuildFloorState(this.events, floorNum);
+  }
+
+  getFloorProgress(floorNum: number): FloorProgress | null {
+    return getFloorProgress(this.events, floorNum);
+  }
+
+  getCurrentFloorProgress(): FloorProgress | null {
+    return getCurrentFloorProgress(this.events);
+  }
+
+  getCurrentFloor(): number {
+    const boundaries = getFloorBoundaries(this.events);
+    if (boundaries.length === 0) return 1;
+    return boundaries[boundaries.length - 1].floor;
+  }
+
+  getTotalFloors(): number {
+    return getFloorBoundaries(this.events).length;
+  }
 }
 
 export function verifyReconstruction(
@@ -546,6 +576,157 @@ export function verifyReconstruction(
     valid: mismatches.length === 0,
     mismatches,
   };
+}
+
+export interface FloorBoundary {
+  floor: number;
+  startEventIndex: number;
+  endEventIndex: number;
+  startState?: GameState;
+  endState?: GameState;
+}
+
+export function getFloorBoundaries(events: GameEvent[]): FloorBoundary[] {
+  const boundaries: FloorBoundary[] = [];
+  let currentFloor = 1;
+  let floorStartIndex = 0;
+
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    if (event.type === "GAME_INIT") {
+      currentFloor = event.floor;
+      floorStartIndex = i;
+    } else if (event.type === "NEXT_FLOOR") {
+      boundaries.push({
+        floor: currentFloor,
+        startEventIndex: floorStartIndex,
+        endEventIndex: i - 1,
+      });
+      currentFloor = event.newFloor;
+      floorStartIndex = i;
+    }
+  }
+
+  if (events.length > 0) {
+    boundaries.push({
+      floor: currentFloor,
+      startEventIndex: floorStartIndex,
+      endEventIndex: events.length - 1,
+    });
+  }
+
+  return boundaries;
+}
+
+export function getFloorEvents(events: GameEvent[], floorNum: number): GameEvent[] {
+  const boundaries = getFloorBoundaries(events);
+  const boundary = boundaries.find((b) => b.floor === floorNum);
+  if (!boundary) return [];
+  return events.slice(boundary.startEventIndex, boundary.endEventIndex + 1);
+}
+
+export function rebuildFloorState(
+  events: GameEvent[],
+  floorNum: number
+): { startState: GameState; endState: GameState; events: GameEvent[] } | null {
+  const boundaries = getFloorBoundaries(events);
+  const boundary = boundaries.find((b) => b.floor === floorNum);
+  if (!boundary) return null;
+
+  const floorEvents = events.slice(boundary.startEventIndex, boundary.endEventIndex + 1);
+
+  let startState: GameState;
+  if (boundary.startEventIndex === 0) {
+    const initEvent = events[0];
+    if (initEvent.type === "GAME_INIT") {
+      startState = initialGameState(initEvent.boardLayout);
+    } else {
+      const layout = generateMap(floorNum, null).rooms;
+      startState = initialGameState(layout);
+    }
+  } else {
+    const eventsBeforeFloor = events.slice(0, boundary.startEventIndex);
+    startState = rebuildState(eventsBeforeFloor);
+  }
+
+  const endState = rebuildState(events.slice(0, boundary.endEventIndex + 1));
+
+  return {
+    startState,
+    endState,
+    events: floorEvents,
+  };
+}
+
+export interface FloorProgress {
+  floor: number;
+  totalRooms: number;
+  revealedRooms: number;
+  defeatedMonsters: number;
+  hpStart: number;
+  hpEnd: number;
+  coinsStart: number;
+  coinsEnd: number;
+  potionsGained: number;
+  potionsUsed: number;
+  trapHits: number;
+  keysGained: number;
+  status: "playing" | "won" | "lost";
+}
+
+export function getFloorProgress(events: GameEvent[], floorNum: number): FloorProgress | null {
+  const floorState = rebuildFloorState(events, floorNum);
+  if (!floorState) return null;
+
+  const { startState, endState, events: floorEvents } = floorState;
+
+  let revealedRooms = 0;
+  let defeatedMonsters = 0;
+  let trapHits = 0;
+  let potionsGained = 0;
+  let potionsUsed = 0;
+  let keysGained = 0;
+
+  for (const event of floorEvents) {
+    if (event.type === "ROOM_FLIP") {
+      if (event.roomType !== "start") {
+        revealedRooms++;
+      }
+      if (event.trapHit) trapHits++;
+      if (event.potionDelta > 0) potionsGained += event.potionDelta;
+      if (event.keyDelta > 0) keysGained += event.keyDelta;
+    } else if (event.type === "BATTLE_WON") {
+      defeatedMonsters++;
+      if (event.gotPotion) potionsGained++;
+    } else if (event.type === "HEAL") {
+      potionsUsed++;
+    } else if (event.type === "BATTLE_HEAL") {
+      potionsUsed++;
+    }
+  }
+
+  return {
+    floor: floorNum,
+    totalRooms: endState.board.length,
+    revealedRooms,
+    defeatedMonsters,
+    hpStart: startState.hp,
+    hpEnd: endState.hp,
+    coinsStart: startState.coins,
+    coinsEnd: endState.coins,
+    potionsGained,
+    potionsUsed,
+    trapHits,
+    keysGained,
+    status: endState.status,
+  };
+}
+
+export function getCurrentFloorProgress(events: GameEvent[]): FloorProgress | null {
+  const boundaries = getFloorBoundaries(events);
+  if (boundaries.length === 0) return null;
+  const currentFloor = boundaries[boundaries.length - 1].floor;
+  return getFloorProgress(events, currentFloor);
 }
 
 export type { GameEvent as GameEventType };

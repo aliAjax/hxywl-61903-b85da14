@@ -330,6 +330,7 @@ export default function App() {
     deleteSaveSlot,
     openSlotPanel,
     dispatchEvent,
+    eventStore,
     verifyStateConsistency,
     getReconstructedState,
     reconstructionError,
@@ -1134,6 +1135,34 @@ export default function App() {
     addDebugLog(`当前金币: ${reconstructed.coins}`);
     addDebugLog(`当前状态: ${reconstructed.status}`);
   }, [getReconstructedState, addDebugLog]);
+
+  const showFloorProgress = useCallback(() => {
+    const store = eventStore.current;
+    if (!store) return;
+    const currentFloor = store.getCurrentFloor();
+    const totalFloors = store.getTotalFloors();
+    const progress = store.getCurrentFloorProgress();
+
+    addDebugLog(`===== 楼层进度 =====`);
+    addDebugLog(`总楼层数: ${totalFloors}`);
+    addDebugLog(`当前楼层: B${currentFloor}F`);
+
+    if (progress) {
+      addDebugLog(`已揭示房间: ${progress.revealedRooms}/${progress.totalRooms}`);
+      addDebugLog(`击败怪物: ${progress.defeatedMonsters}`);
+      addDebugLog(`陷阱触发: ${progress.trapHits}`);
+      addDebugLog(`血量变化: ${progress.hpStart} → ${progress.hpEnd}`);
+      addDebugLog(`金币变化: ${progress.coinsStart} → ${progress.coinsEnd}`);
+      addDebugLog(`药水获得: ${progress.potionsGained}, 药水使用: ${progress.potionsUsed}`);
+      addDebugLog(`钥匙获得: ${progress.keysGained}`);
+      addDebugLog(`楼层状态: ${progress.status}`);
+    }
+
+    for (let f = 1; f <= totalFloors; f++) {
+      const floorEvents = store.getFloorEvents(f);
+      addDebugLog(`  B${f}F: ${floorEvents.length} 个事件`);
+    }
+  }, [addDebugLog]);
 
   const verifyCurrentMap = useCallback(() => {
     const cfg = getFloorConfig(floor, currentRoute);
@@ -2123,6 +2152,7 @@ export default function App() {
             </button>
             <button onClick={runReconstructionCheck}>🔍 验证事件重构</button>
             <button onClick={showEventHistory}>📋 显示事件状态</button>
+            <button onClick={showFloorProgress}>🏗️ 楼层进度</button>
           </div>
           <div className="debug-stats">
             <div>当前楼层: B{floor}F</div>

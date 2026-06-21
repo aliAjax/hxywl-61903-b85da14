@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   GAME_CONSTANTS,
   EVENT_MESSAGES,
+  BATTLE_CONFIG,
   RoomType,
   Monster,
   getFloorConfig,
+  getCoinReward,
+  generateMonster,
   RouteType,
   ROUTE_CONFIGS,
 } from "../config/gameConfig";
@@ -131,120 +134,322 @@ export interface UseNormalProgressOptions {
   showSettlement: boolean;
 }
 
-function generateEventHistoryFromLegacySave(save: any): GameEvent[] {
+function getStartIndex(layout: RoomType[]): number {
+  return layout.findIndex((t) => t === "start");
+}
+
+function getRevealOrder(layout: RoomType[], revealedSet: Set<number>): number[] {
+  const startIdx = getStartIndex(layout);
+  const size = Math.floor(Math.sqrt(layout.length));
+  const visited = new Set<number>();
+  const order: number[] = [];
+  const queue: number[] = [startIdx];
+  visited.add(startIdx);
+
+  while (queue.length > 0) {
+    const idx = queue.shift()!;
+    if (revealedSet.has(idx) && idx !== startIdx) {
+      order.push(idx);
+    }
+    const r = Math.floor(idx / size);
+    const c = idx % size;
+    const neighbors: number[] = [];
+    if (r > 0) neighbors.push(idx - size);
+    if (r < size - 1) neighbors.push(idx + size);
+    if (c > 0) neighbors.push(idx - 1);
+    if (c < size - 1) neighbors.push(idx + 1);
+    for (const n of neighbors) {
+      if (!visited.has(n)) {
+        visited.add(n);
+        queue.push(n);
+      }
+    }
+  }
+  return order;
+}
+
+function reconstructFloorEvents(
+  floor: number,
+  layout: RoomType[],
+  savedBoard: Room[],
+  route: RouteType,
+  startHp: number,
+  startCoins: number,
+  startPotions: number,
+  startStats: GameStats,
+  savedState: {
+    hp: number;
+    coins: number;
+    keys: number;
+    potions: number;
+    stats: GameStats;
+    status: "playing" | "won" | "lost";
+    battleState: BattleState;
+    battleRoomIdx: number;
+    currentMonster: Monster | null;
+  }
+): {
+  events: GameEvent[];
+  endHp: number;
+  endCoins: number;
+  endKeys: number;
+  endPotions: number;
+  endStats: GameStats;
+} {
   const events: GameEvent[] = [];
-  const layout = save.board.map((r: Room) => r.type);
-  
-  events.push({
-    type: "GAME_INIT",
-    floor: save.floor,
-    route: save.currentRoute ?? null,
-    boardLayout: layout,
-  });
 
-  let currentBoard = layout.map((t: RoomType) => ({ type: t, revealed: t === "start" }));
-  let currentHp = GAME_CONSTANTS.maxHp;
-  let currentCoins = 0;
-  let currentKeys = 0;
-  let currentPotions = 0;
-  let currentTurn = 0;
-  let currentStats: GameStats = { ...INITIAL_STATS };
-  let currentBattleState: BattleState = "idle";
-  let currentBattleRoomIdx = -1;
+  const revealedSet = new Set<number>();
+  const defeatedSet = new Set<number>();
+  for (let i = 0; i < savedBoard.length; i++) {
+    if (savedBoard[i].revealed) revealedSet.add(i);
+    if (savedBoard[i].defeated) defeatedSet.add(i);
+  }
 
-  for (let i = 0; i < save.board.length; i++) {
-    const savedRoom = save.board[i];
-    if (savedRoom.revealed && savedRoom.type !== "start") {
-      const room = savedRoom;
-      const dmg = room.type === "trap" ? 1 : 0;
-      const hpDelta = dmg > 0 ? -dmg : 0;
-      
-      if (room.type === "monster" && savedRoom.defeated) {
-        currentBoard[i] = { ...currentBoard[i], revealed: true };
-        currentStats = { ...currentStats, revealedRooms: currentStats.revealedRooms + 1, monstersDefeated: currentStats.monstersDefeated + 1 };
-        currentTurn++;
+  const revealOrder = getRevealOrder(layout, revealedSet);
+
+  let hp = startHp;
+  let coins = startCoins;
+  let keys = 0;
+  let potions = startPotions;
+  let stats: GameStats = { ...startStats };
+
+  for (const idx of revealOrder) {
+    const roomType = layout[idx];
+    const isDefeated = defeatedSet.has(idx);
+    const isCurrentBattle =
+      savedState.battleState === "fighting" && savedState.battleRoomIdx === idx;
+
+    if (roomType === "monster" && (isDefeated || isCurrentBattle)) {
+      const monster =
+        isCurrentBattle && savedState.currentMonster
+          ? { ...savedState.currentMonster }
+          : generateMonster(floor, route);
+
+      events.push({
+        type: "ROOM_FLIP",
+        idx,
+        roomType,
+        hpDelta: 0,
+        coinDelta: 0,
+        keyDelta: 0,
+        potionDelta: 0,
+        trapHit: false,
+        monster: { ...monster },
+        statusAfter: "playing",
+      });
+
+      stats = { ...stats, revealedRooms: stats.revealedRooms + 1 };
+
+      if (isDefeated) {
+        const monsterHpAfter = 0;
         events.push({
-          type: "ROOM_FLIP",
-          idx: i,
-          roomType: room.type,
-          hpDelta: 0,
-          coinDelta: 0,
-          keyDelta: 0,
-          potionDelta: 0,
-          trapHit: false,
-          statusAfter: "playing",
+          type: "BATTLE_ATTACK",
+          damage: monster.maxHp,
+          charged: false,
+          monsterHpAfter,
+          monsterDamage: 0,
+          playerHpAfter: hp,
+          monsterDefeated: true,
         });
-      } else if (room.type === "monster" && save.battleState === "fighting" && save.battleRoomIdx === i) {
-        currentBoard[i] = { ...currentBoard[i], revealed: true };
-        currentStats = { ...currentStats, revealedRooms: currentStats.revealedRooms + 1 };
-        currentTurn++;
-        currentBattleState = "fighting";
-        currentBattleRoomIdx = i;
+
+        const coinReward = monster.coinReward;
+        const gotPotion = false;
+
         events.push({
-          type: "ROOM_FLIP",
-          idx: i,
-          roomType: room.type,
-          hpDelta: 0,
-          coinDelta: 0,
-          keyDelta: 0,
-          potionDelta: 0,
-          trapHit: false,
-          monster: save.currentMonster || undefined,
-          statusAfter: "playing",
+          type: "BATTLE_WON",
+          coinReward,
+          gotPotion,
+          roomIdx: idx,
         });
-      } else {
-        currentBoard[i] = { ...currentBoard[i], revealed: true };
-        currentStats = { ...currentStats, revealedRooms: currentStats.revealedRooms + 1 };
-        
-        if (room.type === "trap" && dmg > 0) {
-          currentStats.trapHits++;
-          currentHp = Math.max(0, currentHp - dmg);
-        }
-        if (room.type === "coin") {
-          currentCoins = save.coins;
-        }
-        if (room.type === "key") {
-          currentKeys = save.keys;
-        }
-        if (room.type === "potion") {
-          currentPotions = save.potions;
-        }
-        if (room.type === "trap") {
-          currentHp = save.hp;
-        }
-        
-        currentTurn++;
-        
-        let statusAfter: "playing" | "won" | "lost" = "playing";
-        if (save.status === "won" && (room.type === "exit" || room.type === "key")) {
-          statusAfter = "won";
-        }
-        if (save.status === "lost" && currentHp <= 0) {
-          statusAfter = "lost";
-        }
-        
+
+        coins += coinReward;
+        stats = { ...stats, monstersDefeated: stats.monstersDefeated + 1 };
+
         events.push({
-          type: "ROOM_FLIP",
-          idx: i,
-          roomType: room.type,
-          hpDelta: hpDelta,
-          coinDelta: room.type === "coin" ? save.coins - currentCoins + (hpDelta > 0 ? 0 : 0) : 0,
-          keyDelta: room.type === "key" ? 1 : 0,
-          potionDelta: room.type === "potion" ? 1 : 0,
-          trapHit: room.type === "trap" && dmg > 0,
-          statusAfter,
+          type: "BATTLE_CLOSE",
+        });
+      }
+    } else {
+      let hpDelta = 0;
+      let coinDelta = 0;
+      let keyDelta = 0;
+      let potionDelta = 0;
+      let trapHit = false;
+
+      if (roomType === "trap") {
+        hpDelta = -1;
+        trapHit = true;
+        stats = { ...stats, trapHits: stats.trapHits + 1 };
+      } else if (roomType === "coin") {
+        coinDelta = getCoinReward(floor, route);
+      } else if (roomType === "key") {
+        keyDelta = 1;
+      } else if (roomType === "potion") {
+        potionDelta = 1;
+      }
+
+      hp = Math.max(0, hp + hpDelta);
+      coins += coinDelta;
+      keys += keyDelta;
+      potions += potionDelta;
+      stats = { ...stats, revealedRooms: stats.revealedRooms + 1 };
+
+      let statusAfter: "playing" | "won" | "lost" = "playing";
+      if (roomType === "exit" && keys > 0) {
+        statusAfter = "won";
+      }
+      if (hp <= 0) {
+        statusAfter = "lost";
+      }
+
+      events.push({
+        type: "ROOM_FLIP",
+        idx,
+        roomType,
+        hpDelta,
+        coinDelta,
+        keyDelta,
+        potionDelta,
+        trapHit,
+        statusAfter,
+      });
+
+      if (statusAfter === "lost") {
+        break;
+      }
+    }
+  }
+
+  const potionsGained = potions - startPotions;
+  const potionsUsed = Math.max(0, potionsGained + startPotions - savedState.potions - potionsGained > 0 ? 0 : 0);
+
+  if (savedState.stats.potionsUsed > stats.potionsUsed) {
+    const extraUsed = savedState.stats.potionsUsed - stats.potionsUsed;
+    for (let i = 0; i < extraUsed; i++) {
+      if (potions > 0 && hp < GAME_CONSTANTS.maxHp) {
+        const healAmount = BATTLE_CONFIG.potionHeal;
+        hp = Math.min(GAME_CONSTANTS.maxHp, hp + healAmount);
+        potions--;
+        stats = { ...stats, potionsUsed: stats.potionsUsed + 1 };
+        events.push({
+          type: "HEAL",
+          healAmount,
+          playerHpAfter: hp,
+          potionsAfter: potions,
         });
       }
     }
   }
 
-  if (save.floor > 1) {
-    for (let f = 2; f <= save.floor; f++) {
-      const nextLayout = f === save.floor ? layout : generateMap(f, save.currentRoute ?? null).rooms;
+  const finalHp = savedState.hp;
+  const finalCoins = savedState.coins;
+  const finalKeys = savedState.keys;
+  const finalPotions = savedState.potions;
+  const finalStats: GameStats = {
+    revealedRooms: savedState.stats.revealedRooms,
+    trapHits: savedState.stats.trapHits,
+    monstersDefeated: savedState.stats.monstersDefeated,
+    potionsUsed: savedState.stats.potionsUsed,
+    fleeCount: savedState.stats.fleeCount,
+  };
+
+  return {
+    events,
+    endHp: finalHp,
+    endCoins: finalCoins,
+    endKeys: finalKeys,
+    endPotions: finalPotions,
+    endStats: finalStats,
+  };
+}
+
+function generateEventHistoryFromLegacySave(save: any): GameEvent[] {
+  const events: GameEvent[] = [];
+  const currentLayout = save.board.map((r: Room) => r.type);
+  const route = save.currentRoute ?? null;
+
+  const startLayout = save.floor === 1 ? currentLayout : generateMap(1, null).rooms;
+
+  events.push({
+    type: "GAME_INIT",
+    floor: 1,
+    route: null,
+    boardLayout: startLayout,
+  });
+
+  let hp = GAME_CONSTANTS.maxHp;
+  let coins = 0;
+  let potions = 0;
+  let stats: GameStats = { ...INITIAL_STATS };
+
+  const savedStats: GameStats = {
+    revealedRooms: save.stats?.revealedRooms ?? INITIAL_STATS.revealedRooms,
+    trapHits: save.stats?.trapHits ?? INITIAL_STATS.trapHits,
+    monstersDefeated: save.stats?.monstersDefeated ?? INITIAL_STATS.monstersDefeated,
+    potionsUsed: save.stats?.potionsUsed ?? INITIAL_STATS.potionsUsed,
+    fleeCount: save.stats?.fleeCount ?? INITIAL_STATS.fleeCount,
+  };
+
+  for (let floorNum = 1; floorNum <= save.floor; floorNum++) {
+    const isCurrentFloor = floorNum === save.floor;
+    const floorRoute = floorNum === save.floor ? route : null;
+    let floorLayout: RoomType[];
+    let floorBoard: Room[];
+
+    if (isCurrentFloor) {
+      floorLayout = currentLayout;
+      floorBoard = save.board;
+    } else {
+      floorLayout = generateMap(floorNum, floorRoute).rooms;
+      floorBoard = floorLayout.map((t) => ({
+        type: t,
+        revealed: true,
+        defeated: t === "monster",
+      }));
+    }
+
+    const floorSavedState = {
+      hp: isCurrentFloor ? save.hp : hp,
+      coins: isCurrentFloor ? save.coins : coins,
+      keys: isCurrentFloor ? save.keys : 1,
+      potions: isCurrentFloor ? save.potions : potions,
+      stats: isCurrentFloor ? savedStats : stats,
+      status: isCurrentFloor ? save.status : "won",
+      battleState: isCurrentFloor ? save.battleState : "idle",
+      battleRoomIdx: isCurrentFloor ? save.battleRoomIdx : -1,
+      currentMonster: isCurrentFloor ? save.currentMonster : null,
+    };
+
+    const result = reconstructFloorEvents(
+      floorNum,
+      floorLayout,
+      floorBoard,
+      floorRoute,
+      hp,
+      coins,
+      potions,
+      stats,
+      floorSavedState
+    );
+
+    events.push(...result.events);
+
+    hp = result.endHp;
+    coins = result.endCoins;
+    potions = result.endPotions;
+    stats = { ...result.endStats };
+
+    if (!isCurrentFloor) {
+      const nextFloorNum = floorNum + 1;
+      const nextLayout =
+        nextFloorNum === save.floor
+          ? currentLayout
+          : generateMap(nextFloorNum, route).rooms;
+
       events.push({
         type: "NEXT_FLOOR",
-        newFloor: f,
-        route: save.currentRoute ?? null,
+        newFloor: nextFloorNum,
+        route,
         boardLayout: nextLayout,
       });
     }
