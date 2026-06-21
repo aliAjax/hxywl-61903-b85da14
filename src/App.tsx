@@ -12,7 +12,6 @@ import {
   generateMonster,
   getCoinReward,
   getDamage,
-  getSymbol,
   shuffle,
   getNeighbors,
   getTotalCells,
@@ -27,7 +26,6 @@ import {
   compileDiagChunk,
   computeDiagOverview,
   GenerationResult,
-  FloorDiagResult,
   DiagReport,
   DiagProgress,
 } from "./config/mapGenerator";
@@ -36,7 +34,6 @@ import {
   LeaderboardEntry,
   loadLeaderboard,
   addLeaderboardEntry,
-  clearLeaderboard,
 } from "./config/saveSystem";
 import {
   BattleLog,
@@ -57,15 +54,24 @@ import {
   getRiskIcon,
   RiskEstimate,
 } from "./config/riskEstimator";
+import LeaderboardPanel from "./components/LeaderboardPanel";
+import DebugPanel from "./components/DebugPanel";
+import SettlementModal from "./components/SettlementModal";
+import GameBoard from "./components/GameBoard";
+import {
+  GameResultType,
+  LeaderboardSortKey,
+  HighScore,
+  HighlightItem,
+  loadHighScore,
+  saveHighScore,
+  evaluateGame,
+  generateHighlights,
+} from "./components/shared";
 
 const SIZE = GAME_CONSTANTS.boardSize;
 const TOTAL = getTotalCells();
 const MAX_HP = GAME_CONSTANTS.maxHp;
-const HIGH_SCORE_KEY = GAME_CONSTANTS.highScoreKey;
-
-type GameResultType = "clear" | "death" | "restart";
-
-type LeaderboardSortKey = "time" | "floor" | "coins";
 
 type HistoryFilter = "all" | "battle" | "trap" | "coin" | "item" | "floor";
 
@@ -92,191 +98,6 @@ const HISTORY_FILTERS: FilterOption[] = [
       (!r.roomType && /^(🏠|⬆️|💾)/.test(r.event)),
   },
 ];
-
-interface HighScore {
-  maxFloor: number;
-  maxCoins: number;
-}
-
-const SYMBOLS: Record<RoomType, string> = {
-  start: getSymbol("start"),
-  coin: getSymbol("coin"),
-  trap: getSymbol("trap"),
-  monster: getSymbol("monster"),
-  key: getSymbol("key"),
-  exit: getSymbol("exit"),
-  potion: getSymbol("potion"),
-  empty: getSymbol("empty"),
-};
-
-function loadHighScore(): HighScore {
-  try {
-    const raw = localStorage.getItem(HIGH_SCORE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        maxFloor: typeof parsed.maxFloor === "number" ? parsed.maxFloor : 1,
-        maxCoins: typeof parsed.maxCoins === "number" ? parsed.maxCoins : 0,
-      };
-    }
-  } catch {
-    /* ignore */
-  }
-  return { maxFloor: 1, maxCoins: 0 };
-}
-
-function saveHighScore(score: HighScore): void {
-  try {
-    localStorage.setItem(HIGH_SCORE_KEY, JSON.stringify(score));
-  } catch {
-    /* ignore */
-  }
-}
-
-function evaluateGame(
-  resultType: GameResultType,
-  finalFloor: number,
-  finalCoins: number,
-  stats: GameStats,
-  finalHp: number
-): { rank: string; comment: string; stars: number } {
-  const score =
-    finalFloor * 100 +
-    finalCoins * 2 +
-    stats.revealedRooms * 1 +
-    stats.monstersDefeated * 5 -
-    stats.trapHits * 3 +
-    finalHp * 10;
-
-  let stars: number;
-  let rank: string;
-  let comment: string;
-
-  if (resultType === "clear") {
-    if (score >= 500) {
-      stars = 5;
-      rank = "传奇冒险家";
-      comment = "完美的探索！你就是地牢之王！";
-    } else if (score >= 350) {
-      stars = 4;
-      rank = "精英探险家";
-      comment = "表现出色，地牢因你而颤抖！";
-    } else if (score >= 200) {
-      stars = 3;
-      rank = "勇敢冒险者";
-      comment = "干得不错，继续向更深层进发！";
-    } else {
-      stars = 2;
-      rank = "新手探险家";
-      comment = "顺利通关，下次尝试更高效的路线！";
-    }
-  } else if (resultType === "death") {
-    if (score >= 400) {
-      stars = 4;
-      rank = "不屈战士";
-      comment = "虽败犹荣！你的战绩令人敬佩！";
-    } else if (score >= 250) {
-      stars = 3;
-      rank = "坚强斗士";
-      comment = "战斗到了最后一刻，值得尊敬！";
-    } else if (score >= 100) {
-      stars = 2;
-      rank = "冒险者";
-      comment = "不要气馁，多积累经验再来挑战！";
-    } else {
-      stars = 1;
-      rank = "探险学徒";
-      comment = "下次小心陷阱和怪物，加油！";
-    }
-  } else {
-    if (score >= 300) {
-      stars = 3;
-      rank = "策略家";
-      comment = "主动撤退也是一种智慧，整装待发！";
-    } else if (score >= 150) {
-      stars = 2;
-      rank = "谨慎探险者";
-      comment = "见好就收，不失为明智之举！";
-    } else {
-      stars = 1;
-      rank = "探索新手";
-      comment = "下次尝试探索更多房间吧！";
-    }
-  }
-
-  return { rank, comment, stars };
-}
-
-interface HighlightItem {
-  icon: string;
-  text: string;
-  priority: number;
-}
-
-function generateHighlights(
-  resultType: GameResultType,
-  finalFloor: number,
-  finalCoins: number,
-  currentStats: GameStats,
-  isFloorRecord: boolean,
-  isCoinRecord: boolean
-): HighlightItem[] {
-  const candidates: HighlightItem[] = [];
-
-  if (isFloorRecord && finalFloor > 1) {
-    candidates.push({ icon: "🏆", text: `刷新纪录！到达 B${finalFloor}F`, priority: 100 });
-  }
-  if (isCoinRecord && finalCoins > 0) {
-    candidates.push({ icon: "💰", text: `刷新纪录！获得 ${finalCoins} 金币`, priority: 95 });
-  }
-  if (resultType === "clear" && currentStats.trapHits === 0) {
-    candidates.push({ icon: "✨", text: "完美闪避！全程未踩陷阱", priority: 85 });
-  }
-  if (currentStats.monstersDefeated >= 3) {
-    candidates.push({ icon: "⚔️", text: `勇猛善战！击败 ${currentStats.monstersDefeated} 只怪物`, priority: 80 });
-  } else if (currentStats.monstersDefeated > 0) {
-    candidates.push({ icon: "⚔️", text: `击败了 ${currentStats.monstersDefeated} 只怪物`, priority: 50 });
-  }
-  if (currentStats.trapHits >= 3) {
-    candidates.push({ icon: "⚡", text: `步履维艰！踩中 ${currentStats.trapHits} 次陷阱`, priority: 70 });
-  } else if (currentStats.trapHits > 0) {
-    candidates.push({ icon: "⚡", text: `踩中 ${currentStats.trapHits} 次陷阱`, priority: 40 });
-  }
-  if (currentStats.potionsUsed >= 2) {
-    candidates.push({ icon: "🧪", text: `药水依赖！使用了 ${currentStats.potionsUsed} 次药水`, priority: 60 });
-  } else if (currentStats.potionsUsed > 0) {
-    candidates.push({ icon: "🧪", text: `使用了 ${currentStats.potionsUsed} 次药水`, priority: 35 });
-  }
-  if (currentStats.fleeCount >= 2) {
-    candidates.push({ icon: "🏃", text: `战术撤退！逃跑了 ${currentStats.fleeCount} 次`, priority: 55 });
-  } else if (currentStats.fleeCount > 0) {
-    candidates.push({ icon: "🏃", text: `逃跑了 ${currentStats.fleeCount} 次`, priority: 30 });
-  }
-  if (currentStats.revealedRooms >= 20) {
-    candidates.push({ icon: "🗺️", text: `探索达人！翻开了 ${currentStats.revealedRooms} 间房`, priority: 45 });
-  } else if (currentStats.revealedRooms >= 5) {
-    candidates.push({ icon: "🗺️", text: `探索了 ${currentStats.revealedRooms} 间房`, priority: 25 });
-  }
-
-  if (candidates.length < 3 && finalFloor > 1) {
-    candidates.push({ icon: "🏰", text: `到达了 B${finalFloor}F`, priority: 20 });
-  }
-  if (candidates.length < 3 && finalCoins > 0) {
-    candidates.push({ icon: "💰", text: `收集了 ${finalCoins} 金币`, priority: 15 });
-  }
-  if (candidates.length < 3) {
-    if (resultType === "clear") {
-      candidates.push({ icon: "🎉", text: "成功通关本层！", priority: 18 });
-    } else if (resultType === "death") {
-      candidates.push({ icon: "💀", text: "在战斗中倒下了...", priority: 18 });
-    } else {
-      candidates.push({ icon: "🗺️", text: `翻开了 ${currentStats.revealedRooms} 间房`, priority: 10 });
-    }
-  }
-
-  candidates.sort((a, b) => b.priority - a.priority);
-  return candidates.slice(0, 3);
-}
 
 export default function App() {
   const [showSettlement, setShowSettlement] = useState(false);
@@ -1066,293 +887,6 @@ export default function App() {
     setPlayerCharging(false);
   }, [battleState, dispatchEvent]);
 
-  const settlementData = useMemo(() => {
-    if (!showSettlement || !settlementResult) return null;
-    const evaluation = evaluateGame(settlementResult, floor, coins, stats, hp);
-    const resultTitle =
-      settlementResult === "clear"
-        ? "🏆 完美通关"
-        : settlementResult === "death"
-          ? "💀 探索失败"
-          : "🏃 主动结束";
-    const highlights = generateHighlights(
-      settlementResult,
-      floor,
-      coins,
-      stats,
-      brokeFloorRecord,
-      brokeCoinRecord
-    );
-    return {
-      evaluation,
-      resultTitle,
-      isFloorRecord: brokeFloorRecord,
-      isCoinRecord: brokeCoinRecord,
-      highlights,
-    };
-  }, [showSettlement, settlementResult, floor, coins, stats, hp, brokeFloorRecord, brokeCoinRecord]);
-
-  const sortedLeaderboard = useMemo(() => {
-    const copy = [...leaderboard];
-    switch (leaderboardSort) {
-      case "floor":
-        return copy.sort((a, b) => b.floor - a.floor || b.coins - a.coins || b.timestamp - a.timestamp);
-      case "coins":
-        return copy.sort((a, b) => b.coins - a.coins || b.floor - a.floor || b.timestamp - a.timestamp);
-      case "time":
-      default:
-        return copy.sort((a, b) => b.timestamp - a.timestamp);
-    }
-  }, [leaderboard, leaderboardSort]);
-
-  const handleClearLeaderboard = useCallback(() => {
-    if (window.confirm("确定要清空所有排行榜记录吗？此操作不可撤销。")) {
-      clearLeaderboard();
-      setLeaderboard([]);
-    }
-  }, []);
-
-  const addDebugLog = useCallback((msg: string) => {
-    setDebugLog((prev) => [msg, ...prev].slice(0, 50));
-  }, []);
-
-  const runReconstructionCheck = useCallback(() => {
-    const store = eventStore.current;
-    if (!store) return;
-
-    const reconstructed = store.rebuild();
-    const events = store.getEvents();
-    const totalEvents = store.getEventCount();
-
-    addDebugLog(`===== 🔍 完整状态重构验证 =====`);
-    addDebugLog(`事件总数: ${totalEvents}, 总楼层数: ${store.getTotalFloors()}`);
-
-    const mismatches: string[] = [];
-
-    if (reconstructed.hp !== hp) mismatches.push(`hp: 重构=${reconstructed.hp}, 实际=${hp}`);
-    if (reconstructed.coins !== coins) mismatches.push(`coins: 重构=${reconstructed.coins}, 实际=${coins}`);
-    if (reconstructed.keys !== keys) mismatches.push(`keys: 重构=${reconstructed.keys}, 实际=${keys}`);
-    if (reconstructed.potions !== potions) mismatches.push(`potions: 重构=${reconstructed.potions}, 实际=${potions}`);
-    if (reconstructed.floor !== floor) mismatches.push(`floor: 重构=B${reconstructed.floor}F, 实际=B${floor}F`);
-    if (reconstructed.status !== status) mismatches.push(`status: 重构=${reconstructed.status}, 实际=${status}`);
-    if (reconstructed.battleState !== battleState) mismatches.push(`battleState: 重构=${reconstructed.battleState}, 实际=${battleState}`);
-    if (reconstructed.battleRoomIdx !== battleRoomIdx) mismatches.push(`battleRoomIdx: 重构=${reconstructed.battleRoomIdx}, 实际=${battleRoomIdx}`);
-    if (reconstructed.playerCharging !== playerCharging) mismatches.push(`playerCharging: 重构=${reconstructed.playerCharging}, 实际=${playerCharging}`);
-    if (reconstructed.currentRoute !== currentRoute) mismatches.push(`currentRoute: 重构=${reconstructed.currentRoute}, 实际=${currentRoute}`);
-
-    if (reconstructed.stats.revealedRooms !== stats.revealedRooms) mismatches.push(`stats.revealedRooms: 重构=${reconstructed.stats.revealedRooms}, 实际=${stats.revealedRooms}`);
-    if (reconstructed.stats.trapHits !== stats.trapHits) mismatches.push(`stats.trapHits: 重构=${reconstructed.stats.trapHits}, 实际=${stats.trapHits}`);
-    if (reconstructed.stats.monstersDefeated !== stats.monstersDefeated) mismatches.push(`stats.monstersDefeated: 重构=${reconstructed.stats.monstersDefeated}, 实际=${stats.monstersDefeated}`);
-    if (reconstructed.stats.potionsUsed !== stats.potionsUsed) mismatches.push(`stats.potionsUsed: 重构=${reconstructed.stats.potionsUsed}, 实际=${stats.potionsUsed}`);
-    if (reconstructed.stats.fleeCount !== stats.fleeCount) mismatches.push(`stats.fleeCount: 重构=${reconstructed.stats.fleeCount}, 实际=${stats.fleeCount}`);
-
-    let boardMismatches = 0;
-    if (reconstructed.board.length !== board.length) {
-      mismatches.push(`board.length: 重构=${reconstructed.board.length}, 实际=${board.length}`);
-    } else {
-      for (let i = 0; i < board.length; i++) {
-        const r = reconstructed.board[i];
-        const a = board[i];
-        if (r.type !== a.type) { boardMismatches++; mismatches.push(`board[${i}].type: 重构=${r.type}, 实际=${a.type}`); }
-        if (r.revealed !== a.revealed) { boardMismatches++; mismatches.push(`board[${i}].revealed: 重构=${r.revealed}, 实际=${a.revealed}`); }
-        if (r.defeated !== a.defeated) { boardMismatches++; mismatches.push(`board[${i}].defeated: 重构=${r.defeated}, 实际=${a.defeated}`); }
-      }
-    }
-
-    if (mismatches.length === 0) {
-      addDebugLog(`✅ 验证通过！所有 ${totalEvents} 个事件正确重建了全部状态`);
-      addDebugLog(`   状态: B${reconstructed.floor}F | HP ${reconstructed.hp} | 金币 ${reconstructed.coins} | 房间揭示 ${reconstructed.stats.revealedRooms}`);
-    } else {
-      addDebugLog(`❌ 验证失败！发现 ${mismatches.length} 处不一致（含 ${boardMismatches} 处地图错误）`);
-      mismatches.slice(0, 15).forEach((m) => addDebugLog(`  - ${m}`));
-      if (mismatches.length > 15) {
-        addDebugLog(`  ... 还有 ${mismatches.length - 15} 处不一致`);
-      }
-    }
-  }, [eventStore, hp, coins, keys, potions, floor, status, battleState, battleRoomIdx, playerCharging, currentRoute, stats, board, addDebugLog]);
-
-  const showEventHistory = useCallback(() => {
-    const reconstructed = getReconstructedState();
-    addDebugLog(`===== 事件历史 =====`);
-    addDebugLog(`总事件数: ${reconstructed.turn}`);
-    addDebugLog(`当前楼层: B${reconstructed.floor}F`);
-    addDebugLog(`当前血量: ${reconstructed.hp}/${GAME_CONSTANTS.maxHp}`);
-    addDebugLog(`当前金币: ${reconstructed.coins}`);
-    addDebugLog(`当前状态: ${reconstructed.status}`);
-  }, [getReconstructedState, addDebugLog]);
-
-  const showFloorProgress = useCallback(() => {
-    const store = eventStore.current;
-    if (!store) return;
-    const currentFloor = store.getCurrentFloor();
-    const totalFloors = store.getTotalFloors();
-    const progress = store.getCurrentFloorProgress();
-
-    addDebugLog(`===== 楼层进度 =====`);
-    addDebugLog(`总楼层数: ${totalFloors}`);
-    addDebugLog(`当前楼层: B${currentFloor}F`);
-
-    if (progress) {
-      addDebugLog(`已揭示房间: ${progress.revealedRooms}/${progress.totalRooms}`);
-      addDebugLog(`击败怪物: ${progress.defeatedMonsters}`);
-      addDebugLog(`陷阱触发: ${progress.trapHits}`);
-      addDebugLog(`血量变化: ${progress.hpStart} → ${progress.hpEnd}`);
-      addDebugLog(`金币变化: ${progress.coinsStart} → ${progress.coinsEnd}`);
-      addDebugLog(`药水获得: ${progress.potionsGained}, 药水使用: ${progress.potionsUsed}`);
-      addDebugLog(`钥匙获得: ${progress.keysGained}`);
-      addDebugLog(`楼层状态: ${progress.status}`);
-    }
-
-    for (let f = 1; f <= totalFloors; f++) {
-      const floorEvents = store.getFloorEvents(f);
-      addDebugLog(`  B${f}F: ${floorEvents.length} 个事件`);
-    }
-  }, [addDebugLog]);
-
-  const verifyCurrentMap = useCallback(() => {
-    const cfg = getFloorConfig(floor, currentRoute);
-    const roomTypes = board.map((r) => r.type);
-    const result = verifyMap(roomTypes, cfg.pathMaxDamage);
-    addDebugLog(`验证结果: ${result.valid ? "✅ 通过" : "❌ 失败"}`);
-    if (result.issues.length > 0) {
-      result.issues.forEach((issue) => addDebugLog(`  - ${issue}`));
-    }
-    addDebugLog(`路径伤害: 起点→钥匙=${result.safePath ? "有" : "无"}`);
-  }, [board, floor, currentRoute, addDebugLog]);
-
-  const printDebugMap = useCallback(() => {
-    const roomTypes = board.map((r) => r.type);
-    const mapStr = printMapDebug(roomTypes, { showPath: true, showDamage: true });
-    addDebugLog("===== 地图布局 =====");
-    mapStr.split("\n").forEach((line) => addDebugLog(line));
-  }, [board, addDebugLog]);
-
-  const regenMap = useCallback(() => {
-    const newBoard = generateBoard(floor, currentRoute);
-    setBoard(newBoard);
-    addDebugLog(`重新生成地图 (B${floor}F)`);
-  }, [floor, currentRoute, addDebugLog]);
-
-  const toggleRevealAll = useCallback(() => {
-    setRevealAllRooms((prev) => !prev);
-    addDebugLog(!revealAllRooms ? "已显示所有房间（调试）" : "已隐藏所有房间（调试）");
-  }, [revealAllRooms, addDebugLog]);
-
-  const startDiagRun = useCallback(() => {
-    if (diagRunning) return;
-    const from = Math.max(1, diagFloorFrom);
-    const to = Math.max(from, diagFloorTo);
-    const iters = Math.max(1, Math.min(500, diagIterations));
-    const totalFloors = to - from + 1;
-    const route = currentRoute;
-
-    diagRef.current = { cancelled: false };
-    setDiagRunning(true);
-    setDiagReport(null);
-    setDiagExpandedFloor(null);
-    setDiagProgress({
-      currentFloor: from,
-      currentIteration: 0,
-      totalFloors,
-      iterationsPerFloor: iters,
-      done: false,
-    });
-
-    const startTime = Date.now();
-    const allResults: FloorDiagResult[] = [];
-    let currentFloorIdx = 0;
-
-    const scheduleWork = (fn: () => void) => {
-      if (typeof requestIdleCallback !== "undefined") {
-        const handle = requestIdleCallback(
-          () => {
-            fn();
-          },
-          { timeout: 50 }
-        );
-        return () => cancelIdleCallback(handle);
-      } else {
-        const handle = setTimeout(fn, 0);
-        return () => clearTimeout(handle);
-      }
-    };
-
-    let cancelScheduled: (() => void) | null = null;
-
-    const processFloor = () => {
-      if (diagRef.current.cancelled) {
-        setDiagRunning(false);
-        setDiagProgress((p) => (p ? { ...p, done: true } : null));
-        return;
-      }
-
-      const floor = from + currentFloorIdx;
-      const chunkResults: GenerationResult[] = [];
-      let iterDone = 0;
-
-      const processBatch = () => {
-        if (diagRef.current.cancelled) {
-          setDiagRunning(false);
-          return;
-        }
-        const batchSize = Math.min(3, iters - iterDone);
-        let batchDone = 0;
-        try {
-          while (batchDone < batchSize && iterDone < iters) {
-            chunkResults.push(runSingleDiagIteration(floor, route));
-            iterDone++;
-            batchDone++;
-          }
-        } catch (e) {
-          // ignore
-        }
-
-        setDiagProgress({
-          currentFloor: floor,
-          currentIteration: iterDone,
-          totalFloors,
-          iterationsPerFloor: iters,
-          done: false,
-        });
-
-        if (iterDone < iters) {
-          cancelScheduled = scheduleWork(processBatch);
-        } else {
-          allResults.push(compileDiagChunk(floor, route, chunkResults, iters));
-          currentFloorIdx++;
-          if (currentFloorIdx < totalFloors) {
-            cancelScheduled = scheduleWork(processFloor);
-          } else {
-            const totalIters = totalFloors * iters;
-            setDiagReport({
-              floors: allResults,
-              totalIterations: totalIters,
-              elapsed: Date.now() - startTime,
-              overview: computeDiagOverview(allResults, totalIters),
-            });
-            setDiagProgress((p) => (p ? { ...p, done: true } : null));
-            setDiagRunning(false);
-          }
-        }
-      };
-
-      processBatch();
-    };
-
-    processFloor();
-  }, [diagRunning, diagFloorFrom, diagFloorTo, diagIterations, currentRoute]);
-
-  const cancelDiagRun = useCallback(() => {
-    diagRef.current.cancelled = true;
-  }, []);
-
-  const displayBoard = useMemo(() => {
-    if (revealAllRooms) {
-      return board.map((r) => ({ ...r, revealed: true }));
-    }
-    return board;
-  }, [board, revealAllRooms]);
-
   const activeFilter = useMemo(
     () => HISTORY_FILTERS.find((f) => f.key === historyFilter) ?? HISTORY_FILTERS[0],
     [historyFilter]
@@ -1404,55 +938,21 @@ export default function App() {
       </section>
 
       <section className="playground dungeon">
-        <div className="board">
-          {displayBoard.map((displayRoom: Room, idx: number) => {
-            const room = board[idx];
-            const isFlippable = flippable.has(idx) && !room.revealed;
-            const hintCells = battleState !== "idle" || showSettlement
-              ? frozenRouteHintRef.current
-              : safeRouteHintCells;
-            const isRouteHint = showRouteHint && hintCells.has(idx) && !room.revealed;
-            const showFlippableHighlight = isFlippable && !showRouteHint;
-            const canClickExit =
-              room.revealed && room.type === "exit" && keys > 0 && canFlip;
-            const isDefeated = displayRoom.type === "monster" && displayRoom.defeated;
-            const isDisabled = !canFlip && !room.revealed;
-            const risk = riskEstimates[idx];
-            const showRisk = showRiskHint && !room.revealed && risk;
-            const riskClass = showRisk ? `risk-level-${risk.level}` : "";
-            return (
-              <button
-                key={idx}
-                className={[
-                  "cell",
-                  displayRoom.type,
-                  displayRoom.revealed ? "revealed" : "",
-                  showFlippableHighlight ? "flippable" : "",
-                  isRouteHint ? "route-hint" : "",
-                  riskClass,
-                  canClickExit ? "can-exit" : "",
-                  isDefeated ? "defeated" : "",
-                  isDisabled ? "disabled" : "",
-                  revealAllRooms ? "debug-revealed" : "",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                onClick={() => flip(idx)}
-              >
-                {displayRoom.revealed
-                  ? isDefeated
-                    ? "💀"
-                    : SYMBOLS[displayRoom.type as keyof typeof SYMBOLS]
-                  : showRisk
-                    ? <span className="risk-indicator">
-                        <span className="risk-icon">{getRiskIcon(risk.level)}</span>
-                        <span className="risk-dot" style={{ backgroundColor: getRiskColor(risk.level) }}></span>
-                      </span>
-                    : "?"}
-              </button>
-            );
-          })}
-        </div>
+        <GameBoard
+          board={board}
+          revealAllRooms={revealAllRooms}
+          flippable={flippable}
+          safeRouteHintCells={safeRouteHintCells}
+          frozenRouteHintRef={frozenRouteHintRef}
+          battleState={battleState}
+          showSettlement={showSettlement}
+          showRouteHint={showRouteHint}
+          showRiskHint={showRiskHint}
+          keys={keys}
+          canFlip={canFlip}
+          riskEstimates={riskEstimates}
+          onFlip={flip}
+        />
         <aside className="side-panel">
           <h2>核心玩法</h2>
           <p>
@@ -1815,84 +1315,18 @@ export default function App() {
         </div>
       )}
 
-      {showSettlement && settlementData && (
-        <div className="settlement-overlay">
-          <div className={`settlement-modal settlement-${settlementResult}`}>
-            <div className="settlement-header">
-              <h2>{settlementData.resultTitle}</h2>
-              <div className="settlement-stars">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <span key={i} className={`star ${i < settlementData.evaluation.stars ? "star-on" : "star-off"}`}>
-                    ★
-                  </span>
-                ))}
-              </div>
-              <div className="settlement-rank">{settlementData.evaluation.rank}</div>
-              <p className="settlement-comment">{settlementData.evaluation.comment}</p>
-            </div>
-
-            <div className="settlement-stats">
-              <div className="stat-row">
-                <span className="stat-label">🏰 到达层数</span>
-                <span className="stat-value">
-                  B{floor}F
-                  {settlementData.isFloorRecord && <span className="record-tag">新纪录!</span>}
-                </span>
-              </div>
-              <div className="stat-row">
-                <span className="stat-label">💰 金币总数</span>
-                <span className="stat-value">
-                  {coins} 枚
-                  {settlementData.isCoinRecord && <span className="record-tag">新纪录!</span>}
-                </span>
-              </div>
-              <div className="stat-row">
-                <span className="stat-label">🚪 翻开房间</span>
-                <span className="stat-value">{stats.revealedRooms} 间</span>
-              </div>
-              <div className="stat-row">
-                <span className="stat-label">⚡ 遭遇陷阱</span>
-                <span className="stat-value">{stats.trapHits} 次</span>
-              </div>
-              <div className="stat-row">
-                <span className="stat-label">👹 击败怪物</span>
-                <span className="stat-value">{stats.monstersDefeated} 只</span>
-              </div>
-            </div>
-
-            {settlementData.highlights.length > 0 && (
-              <div className="settlement-highlights">
-                <div className="highlights-title">✨ 本局亮点</div>
-                <div className="highlights-list">
-                  {settlementData.highlights.map((h, i) => (
-                    <div key={i} className="highlight-item" style={{ animationDelay: `${(i + 1) * 120}ms` }}>
-                      <span className="highlight-icon">{h.icon}</span>
-                      <span className="highlight-text">{h.text}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="settlement-highscore">
-              <div className="hs-row">
-                <span>🏆 历史最高层数</span>
-                <strong>B{highScore.maxFloor}F</strong>
-              </div>
-              <div className="hs-row">
-                <span>💰 历史最高金币</span>
-                <strong>{highScore.maxCoins} 枚</strong>
-              </div>
-            </div>
-
-            <div className="settlement-actions">
-              <button className="btn-settle-restart" onClick={doResetGame}>
-                🔄 再来一局
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SettlementModal
+        showSettlement={showSettlement}
+        settlementResult={settlementResult}
+        floor={floor}
+        coins={coins}
+        stats={stats}
+        hp={hp}
+        brokeFloorRecord={brokeFloorRecord}
+        brokeCoinRecord={brokeCoinRecord}
+        highScore={highScore}
+        onRestart={doResetGame}
+      />
 
       {showRouteSelect && (
         <div className="route-select-overlay">
@@ -2041,139 +1475,14 @@ export default function App() {
         </div>
       )}
 
-      {showLeaderboard && (
-        <div className="leaderboard-overlay">
-          <div className="leaderboard-modal">
-            <div className="leaderboard-header">
-              <h2>📊 历史战绩排行榜</h2>
-              <p>最近 {GAME_CONSTANTS.maxLeaderboardEntries} 局游戏记录</p>
-              <button
-                className="leaderboard-close"
-                onClick={() => setShowLeaderboard(false)}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="leaderboard-toolbar">
-              <div className="leaderboard-sort">
-                <span className="sort-label">排序：</span>
-                <button
-                  className={["sort-btn", leaderboardSort === "time" ? "sort-active" : ""].filter(Boolean).join(" ")}
-                  onClick={() => setLeaderboardSort("time")}
-                >
-                  ⏱️ 最近
-                </button>
-                <button
-                  className={["sort-btn", leaderboardSort === "floor" ? "sort-active" : ""].filter(Boolean).join(" ")}
-                  onClick={() => setLeaderboardSort("floor")}
-                >
-                  🏰 层数
-                </button>
-                <button
-                  className={["sort-btn", leaderboardSort === "coins" ? "sort-active" : ""].filter(Boolean).join(" ")}
-                  onClick={() => setLeaderboardSort("coins")}
-                >
-                  💰 金币
-                </button>
-              </div>
-              <button
-                className="leaderboard-clear"
-                onClick={handleClearLeaderboard}
-                disabled={leaderboard.length === 0}
-              >
-                🗑️ 清空记录
-              </button>
-            </div>
-
-            {sortedLeaderboard.length === 0 ? (
-              <div className="leaderboard-empty">
-                <div className="empty-icon">📭</div>
-                <div className="empty-text">暂无战绩记录</div>
-                <div className="empty-hint">完成一局游戏后将自动记录在此</div>
-              </div>
-            ) : (
-              <div className="leaderboard-list">
-                {sortedLeaderboard.map((entry, idx) => (
-                  <div
-                    key={entry.id}
-                    className={[
-                      "leaderboard-item",
-                      idx === 0 && leaderboardSort !== "time" ? "lb-top-1" : "",
-                      idx === 1 && leaderboardSort !== "time" ? "lb-top-2" : "",
-                      idx === 2 && leaderboardSort !== "time" ? "lb-top-3" : "",
-                      `lb-result-${entry.resultType}`,
-                    ].filter(Boolean).join(" ")}
-                  >
-                    <div className="lb-rank">
-                      {leaderboardSort !== "time" && idx < 3 ? (
-                        <span className="lb-rank-medal">
-                          {idx === 0 ? "🥇" : idx === 1 ? "🥈" : "🥉"}
-                        </span>
-                      ) : (
-                        <span className="lb-rank-num">#{idx + 1}</span>
-                      )}
-                    </div>
-                    <div className="lb-info">
-                      <div className="lb-info-top">
-                        <span className="lb-result-tag">
-                          {entry.resultType === "clear" ? "🏆 通关" : entry.resultType === "death" ? "💀 阵亡" : "🏃 撤退"}
-                        </span>
-                        <span className="lb-stars">
-                          {Array.from({ length: 5 }).map((_, i) => (
-                            <span
-                              key={i}
-                              className={`star-mini ${i < entry.stars ? "star-mini-on" : "star-mini-off"}`}
-                            >
-                              ★
-                            </span>
-                          ))}
-                        </span>
-                        <span className="lb-rank-title">{entry.rank}</span>
-                      </div>
-                      <div className="lb-info-stats">
-                        <span className="lb-stat">🏰 B{entry.floor}F</span>
-                        <span className="lb-stat">💰 {entry.coins}</span>
-                        <span className="lb-stat">🚪 {entry.revealedRooms}</span>
-                        <span className="lb-stat">⚡ {entry.trapHits}</span>
-                        <span className="lb-stat">👹 {entry.monstersDefeated}</span>
-                      </div>
-                      <div className="lb-info-time">
-                        {new Date(entry.timestamp).toLocaleString("zh-CN", {
-                          month: "2-digit",
-                          day: "2-digit",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="leaderboard-footer">
-              <div className="lb-summary">
-                共 {leaderboard.length} 条记录
-                {leaderboard.length > 0 && (
-                  <>
-                    <span className="lb-summary-sep">·</span>
-                    <span>最高 B{Math.max(...leaderboard.map(e => e.floor))}F</span>
-                    <span className="lb-summary-sep">·</span>
-                    <span>最多 {Math.max(...leaderboard.map(e => e.coins))} 金币</span>
-                  </>
-                )}
-              </div>
-              <button
-                className="btn-close-leaderboard"
-                onClick={() => setShowLeaderboard(false)}
-              >
-                关闭
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <LeaderboardPanel
+        showLeaderboard={showLeaderboard}
+        setShowLeaderboard={setShowLeaderboard}
+        leaderboard={leaderboard}
+        setLeaderboard={setLeaderboard}
+        leaderboardSort={leaderboardSort}
+        setLeaderboardSort={setLeaderboardSort}
+      />
 
       <button
         className="debug-toggle"
@@ -2182,440 +1491,56 @@ export default function App() {
         🛠 {showDebugPanel ? "隐藏" : "开发"}
       </button>
 
-      {showDebugPanel && (
-        <section className="debug-panel">
-          <div className="debug-header">
-            <h3>🔧 开发调试面板</h3>
-            <button onClick={() => setShowDebugPanel(false)}>✕</button>
-          </div>
-          <div className="debug-actions">
-            <button onClick={verifyCurrentMap}>验证地图</button>
-            <button onClick={printDebugMap}>打印地图</button>
-            <button onClick={regenMap}>重新生成</button>
-            <button onClick={toggleRevealAll}>
-              {revealAllRooms ? "隐藏房间" : "显示所有房间"}
-            </button>
-            <button onClick={runReconstructionCheck}>🔍 验证事件重构</button>
-            <button onClick={showEventHistory}>📋 显示事件状态</button>
-            <button onClick={showFloorProgress}>🏗️ 楼层进度</button>
-          </div>
-          <div className="debug-stats">
-            <div>当前楼层: B{floor}F</div>
-            <div>当前路线: {currentRouteCfg ? `${currentRouteCfg.icon} ${currentRouteCfg.name}` : "无"}</div>
-            <div>路径上限: {floorCfg.pathMaxDamage} 伤害</div>
-            <div>事件系统: {reconstructionError ? "❌ 不一致" : "✅ 正常"}</div>
-          </div>
-          {reconstructionError && (
-            <div className="debug-error" style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px', padding: '8px', background: '#fef2f2', borderRadius: '4px' }}>
-              ⚠️ {reconstructionError}
-            </div>
-          )}
-
-          <div className="diag-config">
-            <div className="diag-config-title">📊 诊断报告</div>
-            <div className="diag-config-row">
-              <label>楼层范围</label>
-              <div className="diag-range-inputs">
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={diagFloorFrom}
-                  onChange={(e) => setDiagFloorFrom(Math.max(1, parseInt(e.target.value) || 1))}
-                  disabled={diagRunning}
-                />
-                <span>~</span>
-                <input
-                  type="number"
-                  min={diagFloorFrom}
-                  max={20}
-                  value={diagFloorTo}
-                  onChange={(e) => setDiagFloorTo(Math.max(diagFloorFrom, parseInt(e.target.value) || diagFloorFrom))}
-                  disabled={diagRunning}
-                />
-              </div>
-            </div>
-            <div className="diag-config-row">
-              <label>每层迭代</label>
-              <input
-                type="number"
-                className="diag-iter-input"
-                min={1}
-                max={500}
-                value={diagIterations}
-                onChange={(e) => setDiagIterations(Math.max(1, Math.min(500, parseInt(e.target.value) || 50)))}
-                disabled={diagRunning}
-              />
-            </div>
-            <div className="diag-config-row">
-              <label>路线</label>
-              <span className="diag-route-label">
-                {currentRouteCfg ? `${currentRouteCfg.icon} ${currentRouteCfg.name}` : "默认"}
-              </span>
-            </div>
-            <div className="diag-run-row">
-              {!diagRunning ? (
-                <button className="diag-btn-run" onClick={startDiagRun}>
-                  ▶ 运行诊断
-                </button>
-              ) : (
-                <button className="diag-btn-cancel" onClick={cancelDiagRun}>
-                  ⏹ 取消
-                </button>
-              )}
-            </div>
-          </div>
-
-          {diagRunning && diagProgress && !diagProgress.done && (
-            <div className="diag-progress">
-              <div className="diag-progress-bar">
-                <div
-                  className="diag-progress-fill"
-                  style={{
-                    width: `${(
-                      ((diagProgress.currentFloor - diagFloorFrom) * diagProgress.iterationsPerFloor +
-                        diagProgress.currentIteration) /
-                      (diagProgress.totalFloors * diagProgress.iterationsPerFloor) *
-                      100
-                    ).toFixed(1)}%`,
-                  }}
-                />
-              </div>
-              <div className="diag-progress-text">
-                B{diagProgress.currentFloor}F · {diagProgress.currentIteration}/{diagProgress.iterationsPerFloor}
-              </div>
-            </div>
-          )}
-
-          {diagReport && (
-            <div className="diag-report diag-report-v2">
-              <div className="diag-report-header-v2">
-                <div className="diag-report-title-row">
-                  <span className="diag-report-title">📊 开发诊断报告</span>
-                  <span className="diag-report-meta-v2">
-                    {diagReport.totalIterations} 次迭代 · {(diagReport.elapsed / 1000).toFixed(1)}s
-                  </span>
-                </div>
-                <div className="diag-view-tabs">
-                  <button
-                    className={`diag-view-tab ${diagViewMode === "overview" ? "active" : ""}`}
-                    onClick={() => setDiagViewMode("overview")}
-                  >
-                    📈 总览
-                  </button>
-                  <button
-                    className={`diag-view-tab ${diagViewMode === "detail" ? "active" : ""}`}
-                    onClick={() => setDiagViewMode("detail")}
-                  >
-                    📋 详情
-                  </button>
-                </div>
-              </div>
-
-              {diagViewMode === "overview" && diagReport.overview && (
-                <div className="diag-overview-section">
-                  <div className="diag-overview-cards">
-                    <div className="diag-overview-card card-success">
-                      <div className="card-icon">✅</div>
-                      <div className="card-content">
-                        <div className="card-label">总体成功率</div>
-                        <div className="card-value">
-                          {(diagReport.overview.overallSuccessRate * 100).toFixed(1)}%
-                        </div>
-                        <div className="card-sub">
-                          最佳 B{diagReport.overview.bestFloor}F · 最差 B{diagReport.overview.worstFloor}F
-                        </div>
-                      </div>
-                    </div>
-                    <div className="diag-overview-card card-damage">
-                      <div className="card-icon">⚡</div>
-                      <div className="card-content">
-                        <div className="card-label">平均路径伤害</div>
-                        <div className="card-value">
-                          {diagReport.overview.avgPathDamage.toFixed(2)}
-                        </div>
-                        <div className="card-sub">跨 {diagReport.overview.totalFloors} 层平均</div>
-                      </div>
-                    </div>
-                    <div className="diag-overview-card card-attempts">
-                      <div className="card-icon">🔄</div>
-                      <div className="card-content">
-                        <div className="card-label">平均生成尝试</div>
-                        <div className="card-value">
-                          {diagReport.overview.avgAttempts.toFixed(2)}
-                        </div>
-                        <div className="card-sub">最难 B{diagReport.overview.hardestFloor}F</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="diag-trend-section">
-                    <div className="diag-chart-title-v2">📉 成功率趋势</div>
-                    <div className="diag-trend-chart">
-                      <div className="trend-y-axis">
-                        <span>100%</span>
-                        <span>50%</span>
-                        <span>0%</span>
-                      </div>
-                      <div className="trend-content">
-                        <svg
-                          className="trend-svg"
-                          viewBox={`0 0 ${diagReport.floors.length * 60} 100`}
-                          preserveAspectRatio="none"
-                        >
-                          <polyline
-                            fill="none"
-                            stroke="url(#successGradient)"
-                            strokeWidth="2"
-                            points={diagReport.floors
-                              .map((f, i) => `${i * 60 + 30},${100 - f.successRate * 100}`)
-                              .join(" ")}
-                          />
-                          <defs>
-                            <linearGradient id="successGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                              <stop offset="0%" stopColor="#4ade80" />
-                              <stop offset="100%" stopColor="#22c55e" />
-                            </linearGradient>
-                          </defs>
-                          {diagReport.floors.map((f, i) => (
-                            <circle
-                              key={f.floor}
-                              cx={i * 60 + 30}
-                              cy={100 - f.successRate * 100}
-                              r="3"
-                              fill="#4ade80"
-                            />
-                          ))}
-                        </svg>
-                        <div className="trend-x-axis">
-                          {diagReport.floors.map((f) => (
-                            <span key={f.floor} className="trend-x-label">
-                              B{f.floor}F
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="diag-compare-section">
-                    <div className="diag-chart-title-v2">📊 楼层指标对比</div>
-                    <div className="diag-compare-bars">
-                      {diagReport.floors.map((fr) => {
-                        const maxDmg = Math.max(...diagReport.floors.map((f) => f.avgPathDamage), 1);
-                        const maxAtt = Math.max(...diagReport.floors.map((f) => f.avgAttempts), 1);
-                        const isExpanded = diagExpandedFloor === fr.floor;
-                        return (
-                          <div
-                            key={fr.floor}
-                            className={`diag-compare-row ${isExpanded ? "expanded" : ""}`}
-                            onClick={() => setDiagExpandedFloor(isExpanded ? null : fr.floor)}
-                          >
-                            <div className="compare-main">
-                              <span className="compare-floor">B{fr.floor}F</span>
-                              <div className="compare-bars">
-                                <div className="compare-bar-group">
-                                  <div
-                                    className="compare-bar compare-bar-success"
-                                    style={{ width: `${fr.successRate * 100}%` }}
-                                    title={`成功率: ${(fr.successRate * 100).toFixed(1)}%`}
-                                  />
-                                  <span className="compare-bar-label">
-                                    {(fr.successRate * 100).toFixed(0)}%
-                                  </span>
-                                </div>
-                                <div className="compare-bar-group">
-                                  <div
-                                    className="compare-bar compare-bar-damage"
-                                    style={{ width: `${(fr.avgPathDamage / maxDmg) * 100}%` }}
-                                    title={`平均伤害: ${fr.avgPathDamage.toFixed(2)}`}
-                                  />
-                                  <span className="compare-bar-label">
-                                    {fr.avgPathDamage.toFixed(1)}
-                                  </span>
-                                </div>
-                                <div className="compare-bar-group">
-                                  <div
-                                    className="compare-bar compare-bar-attempts"
-                                    style={{ width: `${(fr.avgAttempts / maxAtt) * 100}%` }}
-                                    title={`平均尝试: ${fr.avgAttempts.toFixed(2)}`}
-                                  />
-                                  <span className="compare-bar-label">
-                                    {fr.avgAttempts.toFixed(1)}
-                                  </span>
-                                </div>
-                              </div>
-                              <span className="expand-icon">{isExpanded ? "▲" : "▼"}</span>
-                            </div>
-                            {isExpanded && (
-                              <div className="compare-detail">
-                                <div className="detail-grid">
-                                  <div className="detail-item">
-                                    <span className="detail-label">成功率</span>
-                                    <span className={`detail-value ${fr.successRate >= 0.9 ? "good" : fr.successRate >= 0.5 ? "warn" : "bad"}`}>
-                                      {(fr.successRate * 100).toFixed(1)}%
-                                    </span>
-                                  </div>
-                                  <div className="detail-item">
-                                    <span className="detail-label">平均伤害</span>
-                                    <span className="detail-value">{fr.avgPathDamage.toFixed(2)}</span>
-                                  </div>
-                                  <div className="detail-item">
-                                    <span className="detail-label">中位伤害</span>
-                                    <span className="detail-value">{fr.medianPathDamage.toFixed(2)}</span>
-                                  </div>
-                                  <div className="detail-item">
-                                    <span className="detail-label">伤害范围</span>
-                                    <span className="detail-value">{fr.minPathDamage} ~ {fr.maxPathDamage}</span>
-                                  </div>
-                                  <div className="detail-item">
-                                    <span className="detail-label">标准差</span>
-                                    <span className="detail-value">±{fr.pathDamageStdDev.toFixed(2)}</span>
-                                  </div>
-                                  <div className="detail-item">
-                                    <span className="detail-label">平均尝试</span>
-                                    <span className="detail-value">{fr.avgAttempts.toFixed(2)}</span>
-                                  </div>
-                                </div>
-                                <div className="detail-distribution">
-                                  <div className="dist-title">伤害分布</div>
-                                  <div className="dist-bars">
-                                    {fr.damageDistribution.map((count, i) => {
-                                      const maxCount = Math.max(...fr.damageDistribution, 1);
-                                      return (
-                                        <div key={i} className="dist-bar-wrapper">
-                                          <div
-                                            className="dist-bar"
-                                            style={{ height: `${(count / maxCount) * 100}%` }}
-                                          />
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                                {Object.keys(fr.commonIssues).length > 0 && (
-                                  <div className="detail-issues">
-                                    <div className="issues-title">常见问题</div>
-                                    <div className="issues-list">
-                                      {Object.entries(fr.commonIssues)
-                                        .sort((a, b) => b[1] - a[1])
-                                        .slice(0, 5)
-                                        .map(([issue, count]) => (
-                                          <div key={issue} className="issue-item">
-                                            <span className="issue-name">{issue}</span>
-                                            <span className="issue-count">{count}次</span>
-                                          </div>
-                                        ))}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {diagViewMode === "detail" && (
-                <div className="diag-detail-section">
-                  <div className="diag-detail-table-v2">
-                    <div className="detail-table-header">
-                      <span>楼层</span>
-                      <span>成功率</span>
-                      <span>平均伤害</span>
-                      <span>中位伤害</span>
-                      <span>伤害范围</span>
-                      <span>平均尝试</span>
-                    </div>
-                    {diagReport.floors.map((fr) => (
-                      <div key={fr.floor} className="detail-table-row">
-                        <span className="floor-cell">B{fr.floor}F</span>
-                        <span className={fr.successRate >= 0.9 ? "val-good" : fr.successRate >= 0.5 ? "val-warn" : "val-bad"}>
-                          {(fr.successRate * 100).toFixed(1)}%
-                        </span>
-                        <span>{fr.avgPathDamage.toFixed(2)}</span>
-                        <span>{fr.medianPathDamage.toFixed(2)}</span>
-                        <span>{fr.minPathDamage}~{fr.maxPathDamage}</span>
-                        <span>{fr.avgAttempts.toFixed(2)}</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="diag-issues-summary">
-                    <div className="diag-chart-title-v2">⚠️ 全楼层失败原因汇总</div>
-                    <div className="issues-summary-list">
-                      {(() => {
-                        const allIssues: Record<string, number> = {};
-                        for (const f of diagReport.floors) {
-                          for (const [issue, count] of Object.entries(f.commonIssues)) {
-                            allIssues[issue] = (allIssues[issue] || 0) + count;
-                          }
-                        }
-                        const totalIssues = Object.values(allIssues).reduce((a, b) => a + b, 0);
-                        return Object.entries(allIssues)
-                          .sort((a, b) => b[1] - a[1])
-                          .slice(0, 8)
-                          .map(([issue, count]) => (
-                            <div key={issue} className="issue-summary-item">
-                              <div className="issue-summary-header">
-                                <span className="issue-summary-name">{issue}</span>
-                                <span className="issue-summary-count">{count}次</span>
-                              </div>
-                              <div className="issue-summary-bar">
-                                <div
-                                  className="issue-summary-fill"
-                                  style={{ width: `${totalIssues > 0 ? (count / totalIssues) * 100 : 0}%` }}
-                                />
-                              </div>
-                            </div>
-                          ));
-                      })()}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="diag-report-actions">
-                <button
-                  className="diag-action-btn"
-                  onClick={() => {
-                    const jsonStr = JSON.stringify(diagReport, null, 2);
-                    navigator.clipboard?.writeText(jsonStr).then(
-                      () => addDebugLog("✅ 诊断报告已复制到剪贴板"),
-                      () => addDebugLog("❌ 复制失败，请手动复制")
-                    );
-                  }}
-                >
-                  📋 复制报告
-                </button>
-                <button
-                  className="diag-action-btn"
-                  onClick={startDiagRun}
-                  disabled={diagRunning}
-                >
-                  🔄 重新运行
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="debug-log">
-            <div className="debug-log-header">📋 调试日志</div>
-            <div className="debug-log-content">
-              {debugLog.length === 0 ? (
-                <div className="debug-log-empty">暂无日志，点击上方按钮开始调试</div>
-              ) : (
-                debugLog.map((msg, i) => (
-                  <div key={i} className="debug-log-item">{msg}</div>
-                ))
-              )}
-            </div>
-          </div>
-        </section>
-      )}
+      <DebugPanel
+        showDebugPanel={showDebugPanel}
+        setShowDebugPanel={setShowDebugPanel}
+        revealAllRooms={revealAllRooms}
+        setRevealAllRooms={setRevealAllRooms}
+        diagRunning={diagRunning}
+        setDiagRunning={setDiagRunning}
+        diagFloorFrom={diagFloorFrom}
+        setDiagFloorFrom={setDiagFloorFrom}
+        diagFloorTo={diagFloorTo}
+        setDiagFloorTo={setDiagFloorTo}
+        diagIterations={diagIterations}
+        setDiagIterations={setDiagIterations}
+        diagReport={diagReport}
+        setDiagReport={setDiagReport}
+        diagProgress={diagProgress}
+        setDiagProgress={setDiagProgress}
+        diagExpandedFloor={diagExpandedFloor}
+        setDiagExpandedFloor={setDiagExpandedFloor}
+        diagViewMode={diagViewMode}
+        setDiagViewMode={setDiagViewMode}
+        diagRef={diagRef}
+        debugLog={debugLog}
+        setDebugLog={setDebugLog}
+        floor={floor}
+        board={board}
+        stats={stats}
+        hp={hp}
+        coins={coins}
+        keys={keys}
+        potions={potions}
+        status={status}
+        battleState={battleState}
+        battleRoomIdx={battleRoomIdx}
+        playerCharging={playerCharging}
+        currentRoute={currentRoute}
+        currentRouteCfg={currentRouteCfg}
+        floorCfg={floorCfg}
+        reconstructionError={reconstructionError}
+        eventStore={eventStore}
+        getReconstructedState={getReconstructedState}
+        generateBoard={generateBoard}
+        setBoard={setBoard}
+        verifyMap={verifyMap}
+        printMapDebug={printMapDebug}
+        runSingleDiagIteration={runSingleDiagIteration}
+        compileDiagChunk={compileDiagChunk}
+        computeDiagOverview={computeDiagOverview}
+        getFloorConfig={getFloorConfig}
+      />
     </main>
   );
 }
