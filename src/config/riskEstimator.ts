@@ -122,10 +122,10 @@ function findKeyOrExitAmongRevealed(rooms: KnownRoom[]): number | null {
 }
 
 function probabilityToLevel(prob: number): RiskLevel {
-  if (prob < 0.22) return 1;
-  if (prob < 0.38) return 2;
-  if (prob < 0.55) return 3;
-  if (prob < 0.72) return 4;
+  if (prob < 0.2) return 1;
+  if (prob < 0.4) return 2;
+  if (prob < 0.6) return 3;
+  if (prob < 0.8) return 4;
   return 5;
 }
 
@@ -166,7 +166,7 @@ export function estimateRoomRisks(
     }
 
     let prob = baseProb;
-    let confidence = 0.05;
+    let confidence = 0.1;
 
     const distance = distances[i];
     const totalNeighbors = countAllNeighbors(i);
@@ -175,74 +175,70 @@ export function estimateRoomRisks(
     const revealedNeighbors = dangerNeighbors + safeNeighbors;
 
     if (revealedNeighbors > 0) {
-      confidence = Math.min(0.7, 0.15 + revealedNeighbors / totalNeighbors * 0.55);
+      confidence = Math.min(0.8, 0.2 + revealedNeighbors / totalNeighbors * 0.6);
     }
 
-    if (dangerNeighbors >= 2 && revealedNeighbors >= 3) {
-      prob -= 0.22;
-      confidence = Math.max(confidence, 0.45);
-    } else if (dangerNeighbors >= 1 && revealedNeighbors >= 2) {
-      prob -= 0.12;
-      confidence = Math.max(confidence, 0.3);
+    if (dangerNeighbors >= 2) {
+      prob += 0.28;
+      confidence = Math.max(confidence, 0.55);
     } else if (dangerNeighbors >= 1) {
-      prob -= 0.05;
+      prob += 0.16;
+      confidence = Math.max(confidence, 0.4);
     }
 
-    if (safeNeighbors >= 3 && revealedNeighbors >= 4) {
-      prob += 0.12;
+    if (safeNeighbors >= 3) {
+      prob -= 0.28;
+      confidence = Math.max(confidence, 0.55);
+    } else if (safeNeighbors >= 2) {
+      prob -= 0.18;
       confidence = Math.max(confidence, 0.4);
-    } else if (safeNeighbors >= 2 && revealedNeighbors >= 3) {
-      prob += 0.08;
-      confidence = Math.max(confidence, 0.3);
     } else if (safeNeighbors >= 1) {
-      prob += 0.03;
+      prob -= 0.09;
+      confidence = Math.max(confidence, 0.25);
     }
 
     if (distance === 1) {
-      confidence += 0.15;
-    } else if (distance === 2) {
-      confidence += 0.08;
+      confidence += 0.1;
     }
 
     const distFromStart = manhattanDist(START_IDX, i);
     if (distFromStart <= 1) {
-      prob -= 0.15;
+      prob -= 0.08;
     } else if (distFromStart <= 2) {
-      prob -= 0.1;
+      prob -= 0.04;
     } else if (distFromStart <= 3) {
-      prob -= 0.05;
+      prob -= 0.02;
     }
 
     const blockedReachable = reachableUnrevealedCount(rooms, i);
     const totalUnrev = unrevealedCount;
     const blockImpact = totalUnrev > 0 ? (totalUnrev - blockedReachable) / totalUnrev : 0;
 
-    if (blockImpact > 0.15) {
-      prob -= 0.18 * blockImpact;
-      confidence = Math.max(confidence, 0.25 * blockImpact);
+    if (blockImpact > 0.2) {
+      prob -= 0.25 * blockImpact;
+      confidence = Math.max(confidence, 0.35 * blockImpact);
     }
 
     if (keyOrExitIdx !== null && !keyRevealed !== !exitRevealed) {
       const targetDist = manhattanDist(keyOrExitIdx, i);
       if (targetDist <= 2) {
-        prob -= 0.08;
-        confidence = Math.max(confidence, 0.2);
+        prob -= 0.06;
       }
     }
 
     if (distance >= 5) {
-      prob = baseProb + (prob - baseProb) * 0.15;
-      confidence *= 0.3;
+      prob = baseProb + (prob - baseProb) * 0.1;
+      confidence *= 0.25;
     } else if (distance >= 4) {
-      prob = baseProb + (prob - baseProb) * 0.35;
-      confidence *= 0.5;
+      prob = baseProb + (prob - baseProb) * 0.3;
+      confidence *= 0.45;
     } else if (distance >= 3) {
-      prob = baseProb + (prob - baseProb) * 0.65;
-      confidence *= 0.75;
+      prob = baseProb + (prob - baseProb) * 0.6;
+      confidence *= 0.7;
     }
 
     prob = Math.max(0.05, Math.min(0.95, prob));
-    confidence = Math.max(0.05, Math.min(0.85, confidence));
+    confidence = Math.max(0.05, Math.min(0.9, confidence));
 
     const level = probabilityToLevel(prob);
     estimates.push({
@@ -268,8 +264,8 @@ export function getRiskColor(level: RiskLevel): string {
 
 export function getRiskIcon(level: RiskLevel): string {
   switch (level) {
-    case 1: return "🔵";
-    case 2: return "🟢";
+    case 1: return "🟢";
+    case 2: return "🔵";
     case 3: return "🟡";
     case 4: return "🟠";
     case 5: return "🔴";
