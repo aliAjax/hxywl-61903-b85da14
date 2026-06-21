@@ -20,16 +20,6 @@ import {
   RouteConfig,
 } from "./config/gameConfig";
 import {
-  verifyMap,
-  printMapDebug,
-  runSingleDiagIteration,
-  compileDiagChunk,
-  computeDiagOverview,
-  GenerationResult,
-  DiagReport,
-  DiagProgress,
-} from "./config/mapGenerator";
-import {
   MAX_SLOTS,
   LeaderboardEntry,
   loadLeaderboard,
@@ -44,8 +34,6 @@ import {
   TurnRecord,
   createBattleLog,
   createTurnRecord,
-  generateBoard,
-  getLastGenResult,
   useNormalProgress,
 } from "./hooks/useNormalProgress";
 import {
@@ -159,18 +147,8 @@ export default function App() {
   const [brokeFloorRecord, setBrokeFloorRecord] = useState(false);
   const [brokeCoinRecord, setBrokeCoinRecord] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
-  const [debugLog, setDebugLog] = useState<string[]>([]);
   const [revealAllRooms, setRevealAllRooms] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<HistoryFilter>("all");
-  const [diagFloorFrom, setDiagFloorFrom] = useState(1);
-  const [diagFloorTo, setDiagFloorTo] = useState(10);
-  const [diagIterations, setDiagIterations] = useState(50);
-  const [diagRunning, setDiagRunning] = useState(false);
-  const [diagProgress, setDiagProgress] = useState<DiagProgress | null>(null);
-  const [diagReport, setDiagReport] = useState<DiagReport | null>(null);
-  const [diagExpandedFloor, setDiagExpandedFloor] = useState<number | null>(null);
-  const [diagViewMode, setDiagViewMode] = useState<"overview" | "detail">("overview");
-  const diagRef = useRef<{ cancelled: boolean }>({ cancelled: false });
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>(() => loadLeaderboard());
   const [leaderboardSort, setLeaderboardSort] = useState<LeaderboardSortKey>("time");
@@ -1496,28 +1474,10 @@ export default function App() {
         setShowDebugPanel={setShowDebugPanel}
         revealAllRooms={revealAllRooms}
         setRevealAllRooms={setRevealAllRooms}
-        diagRunning={diagRunning}
-        setDiagRunning={setDiagRunning}
-        diagFloorFrom={diagFloorFrom}
-        setDiagFloorFrom={setDiagFloorFrom}
-        diagFloorTo={diagFloorTo}
-        setDiagFloorTo={setDiagFloorTo}
-        diagIterations={diagIterations}
-        setDiagIterations={setDiagIterations}
-        diagReport={diagReport}
-        setDiagReport={setDiagReport}
-        diagProgress={diagProgress}
-        setDiagProgress={setDiagProgress}
-        diagExpandedFloor={diagExpandedFloor}
-        setDiagExpandedFloor={setDiagExpandedFloor}
-        diagViewMode={diagViewMode}
-        setDiagViewMode={setDiagViewMode}
-        diagRef={diagRef}
-        debugLog={debugLog}
-        setDebugLog={setDebugLog}
         floor={floor}
+        currentRoute={currentRoute}
         board={board}
-        stats={stats}
+        setBoard={setBoard}
         hp={hp}
         coins={coins}
         keys={keys}
@@ -1526,20 +1486,12 @@ export default function App() {
         battleState={battleState}
         battleRoomIdx={battleRoomIdx}
         playerCharging={playerCharging}
-        currentRoute={currentRoute}
-        currentRouteCfg={currentRouteCfg}
-        floorCfg={floorCfg}
+        stats={stats}
         reconstructionError={reconstructionError}
         eventStore={eventStore}
         getReconstructedState={getReconstructedState}
-        generateBoard={generateBoard}
-        setBoard={setBoard}
-        verifyMap={verifyMap}
-        printMapDebug={printMapDebug}
-        runSingleDiagIteration={runSingleDiagIteration}
-        compileDiagChunk={compileDiagChunk}
-        computeDiagOverview={computeDiagOverview}
-        getFloorConfig={getFloorConfig}
+        floorCfg={floorCfg}
+        currentRouteCfg={currentRouteCfg}
       />
     </main>
   );

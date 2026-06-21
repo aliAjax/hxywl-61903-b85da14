@@ -1,18 +1,18 @@
-import { useCallback, useMemo, useRef, useState } from "react";
-import { GAME_CONSTANTS, RouteType, ROUTE_CONFIGS, RouteConfig, getSymbol, RoomType, FloorConfig, getFloorConfig } from "../config/gameConfig";
-import { verifyMap, printMapDebug, runSingleDiagIteration, compileDiagChunk, computeDiagOverview, DiagProgress, DiagReport, FloorDiagResult } from "../config/mapGenerator";
+import { useCallback, useRef, useState } from "react";
+import { GAME_CONSTANTS, RouteType, RouteConfig, FloorConfig, getFloorConfig } from "../config/gameConfig";
+import { verifyMap, printMapDebug, runSingleDiagIteration, compileDiagChunk, computeDiagOverview, DiagProgress, DiagReport, GenerationResult } from "../config/mapGenerator";
 import { generateBoard, Room, GameStats, BattleState } from "../hooks/useNormalProgress";
 import { EventStore } from "../model/eventStore";
 
 interface DebugPanelProps {
   showDebugPanel: boolean;
-  setShowDebugPanel: (show: boolean) => void;
+  setShowDebugPanel: React.Dispatch<React.SetStateAction<boolean>>;
   revealAllRooms: boolean;
-  setRevealAllRooms: (reveal: boolean) => void;
+  setRevealAllRooms: React.Dispatch<React.SetStateAction<boolean>>;
   floor: number;
   currentRoute: RouteType;
   board: Room[];
-  setBoard: (board: Room[]) => void;
+  setBoard: React.Dispatch<React.SetStateAction<Room[]>>;
   hp: number;
   coins: number;
   keys: number;
@@ -27,23 +27,6 @@ interface DebugPanelProps {
   getReconstructedState: () => any;
   floorCfg: FloorConfig;
   currentRouteCfg: RouteConfig | null;
-  addDebugLog: (msg: string) => void;
-  debugLog: string[];
-  diagFloorFrom: number;
-  setDiagFloorFrom: (v: number) => void;
-  diagFloorTo: number;
-  setDiagFloorTo: (v: number) => void;
-  diagIterations: number;
-  setDiagIterations: (v: number) => void;
-  diagRunning: boolean;
-  diagProgress: DiagProgress | null;
-  diagReport: DiagReport | null;
-  diagExpandedFloor: number | null;
-  setDiagExpandedFloor: (v: number | null) => void;
-  diagViewMode: "overview" | "detail";
-  setDiagViewMode: (v: "overview" | "detail") => void;
-  startDiagRun: () => void;
-  cancelDiagRun: () => void;
 }
 
 export default function DebugPanel({
@@ -69,30 +52,27 @@ export default function DebugPanel({
   getReconstructedState,
   floorCfg,
   currentRouteCfg,
-  addDebugLog,
-  debugLog,
-  diagFloorFrom,
-  setDiagFloorFrom,
-  diagFloorTo,
-  setDiagFloorTo,
-  diagIterations,
-  setDiagIterations,
-  diagRunning,
-  diagProgress,
-  diagReport,
-  diagExpandedFloor,
-  setDiagExpandedFloor,
-  diagViewMode,
-  setDiagViewMode,
-  startDiagRun,
-  cancelDiagRun,
 }: DebugPanelProps) {
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+  const [diagFloorFrom, setDiagFloorFrom] = useState(1);
+  const [diagFloorTo, setDiagFloorTo] = useState(10);
+  const [diagIterations, setDiagIterations] = useState(50);
+  const [diagRunning, setDiagRunning] = useState(false);
+  const [diagProgress, setDiagProgress] = useState<DiagProgress | null>(null);
+  const [diagReport, setDiagReport] = useState<DiagReport | null>(null);
+  const [diagExpandedFloor, setDiagExpandedFloor] = useState<number | null>(null);
+  const [diagViewMode, setDiagViewMode] = useState<"overview" | "detail">("overview");
+  const diagRef = useRef<{ cancelled: boolean }>({ cancelled: false });
+
+  const addDebugLog = useCallback((msg: string) => {
+    setDebugLog((prev) => [msg, ...prev].slice(0, 50));
+  }, []);
+
   const runReconstructionCheck = useCallback(() => {
     const store = eventStore.current;
     if (!store) return;
 
     const reconstructed = store.rebuild();
-    const events = store.getEvents();
     const totalEvents = store.getEventCount();
 
     addDebugLog(`===== 🔍 完整状态重构验证 =====`);
@@ -208,6 +188,117 @@ export default function DebugPanel({
     setRevealAllRooms((prev) => !prev);
     addDebugLog(!revealAllRooms ? "已显示所有房间（调试）" : "已隐藏所有房间（调试）");
   }, [revealAllRooms, addDebugLog, setRevealAllRooms]);
+
+  const startDiagRun = useCallback(() => {
+    if (diagRunning) return;
+    const from = Math.max(1, diagFloorFrom);
+    const to = Math.max(from, diagFloorTo);
+    const iters = Math.max(1, Math.min(500, diagIterations));
+    const totalFloors = to - from + 1;
+    const route = currentRoute;
+
+    diagRef.current = { cancelled: false };
+    setDiagRunning(true);
+    setDiagReport(null);
+    setDiagExpandedFloor(null);
+    setDiagProgress({
+      currentFloor: from,
+      currentIteration: 0,
+      totalFloors,
+      iterationsPerFloor: iters,
+      done: false,
+    });
+
+    const startTime = Date.now();
+    const allResults: { floor: number; results: GenerationResult[] }[] = [];
+    let currentFloorIdx = 0;
+
+    const scheduleWork = (fn: () => void) => {
+      if (typeof requestIdleCallback !== "undefined") {
+        const handle = requestIdleCallback(
+          () => {
+            fn();
+          },
+          { timeout: 50 }
+        );
+        return () => cancelIdleCallback(handle);
+      } else {
+        const handle = setTimeout(fn, 0);
+        return () => clearTimeout(handle);
+      }
+    };
+
+    let cancelScheduled: (() => void) | null = null;
+
+    const processFloor = () => {
+      if (diagRef.current.cancelled) {
+        setDiagRunning(false);
+        setDiagProgress((p) => (p ? { ...p, done: true } : null));
+        return;
+      }
+
+      const fl = from + currentFloorIdx;
+      const chunkResults: GenerationResult[] = [];
+      let iterDone = 0;
+
+      const processBatch = () => {
+        if (diagRef.current.cancelled) {
+          setDiagRunning(false);
+          return;
+        }
+        const batchSize = Math.min(3, iters - iterDone);
+        let batchDone = 0;
+        try {
+          while (batchDone < batchSize && iterDone < iters) {
+            chunkResults.push(runSingleDiagIteration(fl, route));
+            iterDone++;
+            batchDone++;
+          }
+        } catch (_e) {
+          // ignore
+        }
+
+        setDiagProgress({
+          currentFloor: fl,
+          currentIteration: iterDone,
+          totalFloors,
+          iterationsPerFloor: iters,
+          done: false,
+        });
+
+        if (iterDone < iters) {
+          cancelScheduled = scheduleWork(processBatch);
+        } else {
+          allResults.push({ floor: fl, results: chunkResults });
+          currentFloorIdx++;
+          if (currentFloorIdx < totalFloors) {
+            cancelScheduled = scheduleWork(processFloor);
+          } else {
+            const compiledFloors = allResults.map((r) =>
+              compileDiagChunk(r.floor, route, r.results, iters)
+            );
+            const totalIters = totalFloors * iters;
+            setDiagReport({
+              floors: compiledFloors,
+              totalIterations: totalIters,
+              elapsed: Date.now() - startTime,
+              overview: computeDiagOverview(compiledFloors, totalIters),
+            });
+            setDiagProgress((p) => (p ? { ...p, done: true } : null));
+            setDiagRunning(false);
+          }
+        }
+      };
+
+      processBatch();
+    };
+
+    processFloor();
+  }, [diagRunning, diagFloorFrom, diagFloorTo, diagIterations, currentRoute]);
+
+  const cancelDiagRun = useCallback(() => {
+    diagRef.current.cancelled = true;
+  }, []);
 
   if (!showDebugPanel) return null;
 
