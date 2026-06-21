@@ -329,6 +329,10 @@ export default function App() {
     loadFromSlot,
     deleteSaveSlot,
     openSlotPanel,
+    dispatchEvent,
+    verifyStateConsistency,
+    getReconstructedState,
+    reconstructionError,
   } = useNormalProgress({ showSettlement });
   const [brokeFloorRecord, setBrokeFloorRecord] = useState(false);
   const [brokeCoinRecord, setBrokeCoinRecord] = useState(false);
@@ -431,8 +435,19 @@ export default function App() {
       setLeaderboard(updatedLeaderboard);
       setSettlementResult(resultType);
       setShowSettlement(true);
+
+      dispatchEvent({
+        type: "SETTLEMENT",
+        resultType,
+        finalFloor: currentFloor,
+        finalCoins: currentCoins,
+        finalHp: currentHp,
+        stats: { ...currentStats },
+        brokeFloorRecord: isFloorRecord,
+        brokeCoinRecord: isCoinRecord,
+      });
     },
-    [highScore]
+    [highScore, dispatchEvent]
   );
 
   const flip = useCallback(
@@ -444,6 +459,7 @@ export default function App() {
           setStatus("won");
           const nextTurn = turn + 1;
           setTurn(nextTurn);
+          dispatchEvent({ type: "EXIT_WITH_KEY" });
           setHistory((prev: TurnRecord[]) => [
             createTurnRecord({
               turn: nextTurn,
@@ -485,6 +501,18 @@ export default function App() {
           createBattleLog(`遭遇了 ${monster.icon} ${monster.name}！`, "system"),
           createBattleLog(`怪物HP: ${monster.hp}/${monster.maxHp}，攻击力: ${monster.attack}`, "system"),
         ]);
+        dispatchEvent({
+          type: "ROOM_FLIP",
+          idx,
+          roomType: room.type,
+          hpDelta: 0,
+          coinDelta: 0,
+          keyDelta: 0,
+          potionDelta: 0,
+          trapHit: false,
+          monster,
+          statusAfter: "playing",
+        });
         setHistory((prev: TurnRecord[]) => [
           createTurnRecord({
             turn: nextTurn,
@@ -621,9 +649,20 @@ export default function App() {
       setStatus(newStatus);
       setTurn(nextTurn);
       setStats(newStats);
+      dispatchEvent({
+        type: "ROOM_FLIP",
+        idx,
+        roomType: room.type,
+        hpDelta: newHp - hp,
+        coinDelta: newCoins - coins,
+        keyDelta: newKeys - keys,
+        potionDelta: newPotions - potions,
+        trapHit: room.type === "trap" && getDamage(room.type) > 0,
+        statusAfter: newStatus,
+      });
       setHistory((prev: TurnRecord[]) => [...records, ...prev]);
     },
-    [board, hp, coins, keys, potions, status, flippable, exitRevealed, turn, floor, stats, triggerSettlement, canFlip]
+    [board, hp, coins, keys, potions, status, flippable, exitRevealed, turn, floor, stats, triggerSettlement, canFlip, dispatchEvent]
   );
 
   const handleRestart = useCallback(() => {
@@ -691,6 +730,12 @@ export default function App() {
     setPotions((p: number) => p - 1);
     setHp((h: number) => Math.min(MAX_HP, h + healAmount));
     setStats((s: GameStats) => ({ ...s, potionsUsed: s.potionsUsed + 1 }));
+    dispatchEvent({
+      type: "HEAL",
+      healAmount,
+      playerHpAfter: Math.min(MAX_HP, hp + healAmount),
+      potionsAfter: potions - 1,
+    });
     setHistory((prev: TurnRecord[]) => [
       createTurnRecord({
         turn,
@@ -702,7 +747,7 @@ export default function App() {
       }),
       ...prev,
     ]);
-  }, [potions, hp, status, turn, floor]);
+  }, [potions, hp, status, turn, floor, dispatchEvent]);
 
   const endBattle = useCallback(
     (result: "won" | "lost" | "fled", finalMonster: Monster | null, settleDelay: number = 1200, fleeDamage: number = BATTLE_CONFIG.fleeSuccessDamage) => {
@@ -735,6 +780,12 @@ export default function App() {
             "reward"
           ),
         ]);
+        dispatchEvent({
+          type: "BATTLE_WON",
+          coinReward: finalMonster.coinReward,
+          gotPotion,
+          roomIdx: battleRoomIdx,
+        });
         setHistory((prev: TurnRecord[]) => [
           createTurnRecord({
             turn,
@@ -762,6 +813,13 @@ export default function App() {
           ...prev,
           createBattleLog(EVENT_MESSAGES.roomResetLog, "system"),
         ]);
+        dispatchEvent({
+          type: "BATTLE_FLED",
+          fleeDamage: finalFleeDamage,
+          playerHpAfter: finalHp,
+          roomIdx: battleRoomIdx,
+          playerDied: finalHp <= 0,
+        });
         setHistory((prev: TurnRecord[]) => [
           createTurnRecord({
             turn,
@@ -793,6 +851,10 @@ export default function App() {
         finalHp = 0;
         setHp(0);
         setStatus("lost");
+        dispatchEvent({
+          type: "BATTLE_LOST",
+          roomIdx: battleRoomIdx,
+        });
         setHistory((prev: TurnRecord[]) => [
           createTurnRecord({
             turn,
@@ -814,7 +876,7 @@ export default function App() {
         }, settleDelay);
       }
     },
-    [battleRoomIdx, turn, floor, coins, stats, hp, triggerSettlement]
+    [battleRoomIdx, turn, floor, coins, stats, hp, triggerSettlement, dispatchEvent]
   );
 
   const battleAttack = useCallback(() => {
@@ -840,6 +902,15 @@ export default function App() {
       newLogs.push(createBattleLog(EVENT_MESSAGES.monsterDefeatedLog(currentMonster), "system"));
       setCurrentMonster(updatedMonster);
       setBattleLog((prev) => [...prev, ...newLogs]);
+      dispatchEvent({
+        type: "BATTLE_ATTACK",
+        damage: playerDamage,
+        charged: playerCharging,
+        monsterHpAfter: newMonsterHp,
+        monsterDamage: 0,
+        playerHpAfter: hp,
+        monsterDefeated: true,
+      });
       setTimeout(() => {
         endBattle("won", updatedMonster);
       }, 600);
@@ -855,6 +926,15 @@ export default function App() {
     setBattleLog((prev) => [...prev, ...newLogs]);
     setHp((h) => {
       const newHp = Math.max(0, h - monsterDamage);
+      dispatchEvent({
+        type: "BATTLE_ATTACK",
+        damage: playerDamage,
+        charged: playerCharging,
+        monsterHpAfter: newMonsterHp,
+        monsterDamage,
+        playerHpAfter: newHp,
+        monsterDefeated: false,
+      });
       if (newHp <= 0) {
         setTimeout(() => {
           endBattle("lost", updatedMonster, 1500);
@@ -862,7 +942,7 @@ export default function App() {
       }
       return newHp;
     });
-  }, [battleState, currentMonster, endBattle, playerCharging]);
+  }, [battleState, currentMonster, endBattle, playerCharging, hp, dispatchEvent]);
 
   const battleCharge = useCallback(() => {
     if (battleState !== "fighting" || !currentMonster) return;
@@ -889,6 +969,12 @@ export default function App() {
     setBattleLog((prev) => [...prev, ...newLogs]);
     setHp((h) => {
       const newHp = Math.max(0, h - monsterDamage);
+      dispatchEvent({
+        type: "BATTLE_CHARGE",
+        monsterDamage,
+        playerHpAfter: newHp,
+        playerDied: newHp <= 0,
+      });
       if (newHp <= 0) {
         setTimeout(() => {
           endBattle("lost", currentMonster, 1500);
@@ -896,7 +982,7 @@ export default function App() {
       }
       return newHp;
     });
-  }, [battleState, currentMonster, endBattle, playerCharging]);
+  }, [battleState, currentMonster, endBattle, playerCharging, dispatchEvent]);
 
   const battleUsePotion = useCallback(() => {
     if (battleState !== "fighting") return;
@@ -918,16 +1004,29 @@ export default function App() {
     setPotions((p) => p - 1);
     setHp((h) => Math.min(MAX_HP, h + healAmount));
     setStats((s: GameStats) => ({ ...s, potionsUsed: s.potionsUsed + 1 }));
+    dispatchEvent({
+      type: "BATTLE_HEAL",
+      healAmount,
+      playerHpAfter: Math.min(MAX_HP, hp + healAmount),
+      potionsAfter: potions - 1,
+    });
     setBattleLog((prev) => [
       ...prev,
       createBattleLog(EVENT_MESSAGES.potionUse(healAmount), "player"),
     ]);
-  }, [battleState, potions, hp]);
+  }, [battleState, potions, hp, dispatchEvent]);
 
   const battleFlee = useCallback(() => {
     if (battleState !== "fighting") return;
     const fleeSuccess = Math.random() < BATTLE_CONFIG.fleeSuccessRate;
     const fleeDamage = fleeSuccess ? BATTLE_CONFIG.fleeSuccessDamage : (currentMonster ? currentMonster.attack : BATTLE_CONFIG.fleeSuccessDamage);
+    dispatchEvent({
+      type: "BATTLE_FLEE",
+      success: fleeSuccess,
+      fleeDamage,
+      playerHpAfter: Math.max(0, hp - fleeDamage),
+      playerDied: hp - fleeDamage <= 0,
+    });
     if (fleeSuccess) {
       setBattleLog((prev) => [
         ...prev,
@@ -954,16 +1053,17 @@ export default function App() {
         }, 600);
       }
     }
-  }, [battleState, currentMonster, endBattle, hp]);
+  }, [battleState, currentMonster, endBattle, hp, dispatchEvent]);
 
   const closeBattle = useCallback(() => {
     if (battleState === "fighting") return;
+    dispatchEvent({ type: "BATTLE_CLOSE" });
     setBattleState("idle");
     setCurrentMonster(null);
     setBattleLog([]);
     setBattleRoomIdx(-1);
     setPlayerCharging(false);
-  }, [battleState]);
+  }, [battleState, dispatchEvent]);
 
   const settlementData = useMemo(() => {
     if (!showSettlement || !settlementResult) return null;
@@ -1014,6 +1114,26 @@ export default function App() {
   const addDebugLog = useCallback((msg: string) => {
     setDebugLog((prev) => [msg, ...prev].slice(0, 50));
   }, []);
+
+  const runReconstructionCheck = useCallback(() => {
+    const verification = verifyStateConsistency();
+    if (verification.valid) {
+      addDebugLog(`✅ 状态重构验证通过！事件数量: ${getReconstructedState ? getReconstructedState().turn : "N/A"}`);
+    } else {
+      addDebugLog(`❌ 状态重构验证失败: ${verification.mismatches.length} 处不一致`);
+      verification.mismatches.forEach((m: string) => addDebugLog(`  - ${m}`));
+    }
+  }, [verifyStateConsistency, getReconstructedState, addDebugLog]);
+
+  const showEventHistory = useCallback(() => {
+    const reconstructed = getReconstructedState();
+    addDebugLog(`===== 事件历史 =====`);
+    addDebugLog(`总事件数: ${reconstructed.turn}`);
+    addDebugLog(`当前楼层: B${reconstructed.floor}F`);
+    addDebugLog(`当前血量: ${reconstructed.hp}/${GAME_CONSTANTS.maxHp}`);
+    addDebugLog(`当前金币: ${reconstructed.coins}`);
+    addDebugLog(`当前状态: ${reconstructed.status}`);
+  }, [getReconstructedState, addDebugLog]);
 
   const verifyCurrentMap = useCallback(() => {
     const cfg = getFloorConfig(floor, currentRoute);
@@ -2001,12 +2121,20 @@ export default function App() {
             <button onClick={toggleRevealAll}>
               {revealAllRooms ? "隐藏房间" : "显示所有房间"}
             </button>
+            <button onClick={runReconstructionCheck}>🔍 验证事件重构</button>
+            <button onClick={showEventHistory}>📋 显示事件状态</button>
           </div>
           <div className="debug-stats">
             <div>当前楼层: B{floor}F</div>
             <div>当前路线: {currentRouteCfg ? `${currentRouteCfg.icon} ${currentRouteCfg.name}` : "无"}</div>
             <div>路径上限: {floorCfg.pathMaxDamage} 伤害</div>
+            <div>事件系统: {reconstructionError ? "❌ 不一致" : "✅ 正常"}</div>
           </div>
+          {reconstructionError && (
+            <div className="debug-error" style={{ color: '#ef4444', fontSize: '12px', marginTop: '8px', padding: '8px', background: '#fef2f2', borderRadius: '4px' }}>
+              ⚠️ {reconstructionError}
+            </div>
+          )}
 
           <div className="diag-config">
             <div className="diag-config-title">📊 诊断报告</div>

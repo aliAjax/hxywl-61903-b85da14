@@ -19,6 +19,16 @@ import {
   deleteSlot,
   SlotMeta,
 } from "../config/saveSystem";
+import {
+  EventStore,
+  GameEvent,
+  GameState,
+  GameResultType,
+  initialGameState,
+  applyEvent,
+  rebuildState,
+  verifyReconstruction,
+} from "../model/eventStore";
 
 export interface Room {
   type: RoomType;
@@ -69,6 +79,10 @@ export function generateBoard(floor: number = 1, route: RouteType = null): Room[
   return result.rooms.map((t) => ({ type: t, revealed: t === "start" }));
 }
 
+export function getBoardLayout(rooms: Room[]): RoomType[] {
+  return rooms.map((r) => r.type);
+}
+
 export function getLastGenResult(): GenerationResult | null {
   return lastGenResult;
 }
@@ -117,7 +131,132 @@ export interface UseNormalProgressOptions {
   showSettlement: boolean;
 }
 
+function generateEventHistoryFromLegacySave(save: any): GameEvent[] {
+  const events: GameEvent[] = [];
+  const layout = save.board.map((r: Room) => r.type);
+  
+  events.push({
+    type: "GAME_INIT",
+    floor: save.floor,
+    route: save.currentRoute ?? null,
+    boardLayout: layout,
+  });
+
+  let currentBoard = layout.map((t: RoomType) => ({ type: t, revealed: t === "start" }));
+  let currentHp = GAME_CONSTANTS.maxHp;
+  let currentCoins = 0;
+  let currentKeys = 0;
+  let currentPotions = 0;
+  let currentTurn = 0;
+  let currentStats: GameStats = { ...INITIAL_STATS };
+  let currentBattleState: BattleState = "idle";
+  let currentBattleRoomIdx = -1;
+
+  for (let i = 0; i < save.board.length; i++) {
+    const savedRoom = save.board[i];
+    if (savedRoom.revealed && savedRoom.type !== "start") {
+      const room = savedRoom;
+      const dmg = room.type === "trap" ? 1 : 0;
+      const hpDelta = dmg > 0 ? -dmg : 0;
+      
+      if (room.type === "monster" && savedRoom.defeated) {
+        currentBoard[i] = { ...currentBoard[i], revealed: true };
+        currentStats = { ...currentStats, revealedRooms: currentStats.revealedRooms + 1, monstersDefeated: currentStats.monstersDefeated + 1 };
+        currentTurn++;
+        events.push({
+          type: "ROOM_FLIP",
+          idx: i,
+          roomType: room.type,
+          hpDelta: 0,
+          coinDelta: 0,
+          keyDelta: 0,
+          potionDelta: 0,
+          trapHit: false,
+          statusAfter: "playing",
+        });
+      } else if (room.type === "monster" && save.battleState === "fighting" && save.battleRoomIdx === i) {
+        currentBoard[i] = { ...currentBoard[i], revealed: true };
+        currentStats = { ...currentStats, revealedRooms: currentStats.revealedRooms + 1 };
+        currentTurn++;
+        currentBattleState = "fighting";
+        currentBattleRoomIdx = i;
+        events.push({
+          type: "ROOM_FLIP",
+          idx: i,
+          roomType: room.type,
+          hpDelta: 0,
+          coinDelta: 0,
+          keyDelta: 0,
+          potionDelta: 0,
+          trapHit: false,
+          monster: save.currentMonster || undefined,
+          statusAfter: "playing",
+        });
+      } else {
+        currentBoard[i] = { ...currentBoard[i], revealed: true };
+        currentStats = { ...currentStats, revealedRooms: currentStats.revealedRooms + 1 };
+        
+        if (room.type === "trap" && dmg > 0) {
+          currentStats.trapHits++;
+          currentHp = Math.max(0, currentHp - dmg);
+        }
+        if (room.type === "coin") {
+          currentCoins = save.coins;
+        }
+        if (room.type === "key") {
+          currentKeys = save.keys;
+        }
+        if (room.type === "potion") {
+          currentPotions = save.potions;
+        }
+        if (room.type === "trap") {
+          currentHp = save.hp;
+        }
+        
+        currentTurn++;
+        
+        let statusAfter: "playing" | "won" | "lost" = "playing";
+        if (save.status === "won" && (room.type === "exit" || room.type === "key")) {
+          statusAfter = "won";
+        }
+        if (save.status === "lost" && currentHp <= 0) {
+          statusAfter = "lost";
+        }
+        
+        events.push({
+          type: "ROOM_FLIP",
+          idx: i,
+          roomType: room.type,
+          hpDelta: hpDelta,
+          coinDelta: room.type === "coin" ? save.coins - currentCoins + (hpDelta > 0 ? 0 : 0) : 0,
+          keyDelta: room.type === "key" ? 1 : 0,
+          potionDelta: room.type === "potion" ? 1 : 0,
+          trapHit: room.type === "trap" && dmg > 0,
+          statusAfter,
+        });
+      }
+    }
+  }
+
+  if (save.floor > 1) {
+    for (let f = 2; f <= save.floor; f++) {
+      const nextLayout = f === save.floor ? layout : generateMap(f, save.currentRoute ?? null).rooms;
+      events.push({
+        type: "NEXT_FLOOR",
+        newFloor: f,
+        route: save.currentRoute ?? null,
+        boardLayout: nextLayout,
+      });
+    }
+  }
+
+  return events;
+}
+
 export function useNormalProgress({ showSettlement }: UseNormalProgressOptions) {
+  const eventStoreRef = useRef<EventStore>(new EventStore());
+  const [reconstructionError, setReconstructionError] = useState<string | null>(null);
+
   const initialFloor = loadedSave?.floor ?? 1;
   const [board, setBoard] = useState<Room[]>(() =>
     loadedSave ? loadedSave.board : generateBoard(initialFloor)
@@ -160,6 +299,76 @@ export function useNormalProgress({ showSettlement }: UseNormalProgressOptions) 
 
   const saveRestoredRef = useRef(!!loadedSave);
 
+  const syncStateFromEventStore = useCallback(() => {
+    const reconstructed = eventStoreRef.current.rebuild();
+    setBoard(reconstructed.board);
+    setHp(reconstructed.hp);
+    setCoins(reconstructed.coins);
+    setKeys(reconstructed.keys);
+    setPotions(reconstructed.potions);
+    setFloor(reconstructed.floor);
+    setStatus(reconstructed.status);
+    setTurn(reconstructed.turn);
+    setStats(reconstructed.stats);
+    setBattleState(reconstructed.battleState);
+    setCurrentMonster(reconstructed.currentMonster);
+    setBattleRoomIdx(reconstructed.battleRoomIdx);
+    setPlayerCharging(reconstructed.playerCharging);
+    setCurrentRoute(reconstructed.currentRoute);
+    setShowRouteHint(reconstructed.showRouteHint);
+    setShowRiskHint(reconstructed.showRiskHint);
+  }, []);
+
+  const verifyStateConsistency = useCallback(() => {
+    const currentState: Partial<GameState> = {
+      board,
+      hp,
+      coins,
+      keys,
+      potions,
+      floor,
+      status,
+      turn,
+      stats,
+      battleState,
+      battleRoomIdx,
+      playerCharging,
+      currentRoute,
+      showRouteHint,
+      showRiskHint,
+    };
+    const verification = verifyReconstruction(eventStoreRef.current.getEvents(), currentState);
+    if (!verification.valid) {
+      console.warn("State reconstruction mismatch:", verification.mismatches);
+      setReconstructionError(verification.mismatches.join("; "));
+    } else {
+      setReconstructionError(null);
+    }
+    return verification;
+  }, [board, hp, coins, keys, potions, floor, status, turn, stats, battleState, battleRoomIdx, playerCharging, currentRoute, showRouteHint, showRiskHint]);
+
+  const getReconstructedState = useCallback((): GameState => {
+    return eventStoreRef.current.rebuild();
+  }, []);
+
+  useEffect(() => {
+    const store = eventStoreRef.current;
+    if (loadedSave?.eventHistory && loadedSave.eventHistory.length > 0) {
+      store.loadFromSave(loadedSave.eventHistory);
+    } else if (loadedSave) {
+      const syntheticEvents = generateEventHistoryFromLegacySave(loadedSave);
+      store.loadFromSave(syntheticEvents);
+    } else {
+      const layout = generateMap(initialFloor, null).rooms;
+      store.push({
+        type: "GAME_INIT",
+        floor: initialFloor,
+        route: null,
+        boardLayout: layout,
+      });
+    }
+  }, []);
+
   useEffect(() => {
     if (saveRestoredRef.current) {
       const restoredFloor = loadedSave!.floor;
@@ -185,6 +394,7 @@ export function useNormalProgress({ showSettlement }: UseNormalProgressOptions) 
         }),
         ...prev,
       ]);
+      eventStoreRef.current.push({ type: "SAVE_RESTORE", source: "auto" });
       saveRestoredRef.current = false;
     }
   }, []);
@@ -210,13 +420,20 @@ export function useNormalProgress({ showSettlement }: UseNormalProgressOptions) 
       showRiskHint,
       playerCharging,
       currentRoute,
+      eventHistory: eventStoreRef.current.getEvents(),
     });
   }, [board, hp, coins, keys, potions, floor, status, turn, stats, battleState, currentMonster, battleLog, battleRoomIdx, history, showSettlement, showRouteHint, showRiskHint, playerCharging, currentRoute]);
+
+  const dispatchEvent = useCallback((event: GameEvent) => {
+    eventStoreRef.current.push(event);
+  }, []);
 
   const resetProgress = useCallback(() => {
     clearSave();
     const newFloor = 1;
-    setBoard(generateBoard(newFloor, null));
+    const newBoard = generateBoard(newFloor, null);
+    const layout = getBoardLayout(newBoard);
+    setBoard(newBoard);
     setHp(GAME_CONSTANTS.maxHp);
     setCoins(0);
     setKeys(0);
@@ -244,6 +461,7 @@ export function useNormalProgress({ showSettlement }: UseNormalProgressOptions) 
         items: [],
       }),
     ]);
+    eventStoreRef.current.push({ type: "GAME_RESET", boardLayout: layout });
   }, []);
 
   const nextFloor = useCallback(() => {
@@ -254,7 +472,9 @@ export function useNormalProgress({ showSettlement }: UseNormalProgressOptions) 
     const newFloor = floor + 1;
     const nextCfg = getFloorConfig(newFloor, route);
     const routeCfg = route ? ROUTE_CONFIGS[route] : null;
-    setBoard(generateBoard(newFloor, route));
+    const newBoard = generateBoard(newFloor, route);
+    const layout = getBoardLayout(newBoard);
+    setBoard(newBoard);
     setFloor(newFloor);
     setKeys(0);
     setStatus("playing");
@@ -296,6 +516,7 @@ export function useNormalProgress({ showSettlement }: UseNormalProgressOptions) 
       }),
       ...prev,
     ]);
+    eventStoreRef.current.push({ type: "NEXT_FLOOR", newFloor, route, boardLayout: layout });
   }, [floor]);
 
   const saveToSlot = useCallback((slot: number) => {
@@ -318,6 +539,7 @@ export function useNormalProgress({ showSettlement }: UseNormalProgressOptions) 
       showRiskHint,
       playerCharging,
       currentRoute,
+      eventHistory: eventStoreRef.current.getEvents(),
     });
     setSlotList(getSlotList());
     setShowSlotPanel(null);
@@ -387,6 +609,13 @@ export function useNormalProgress({ showSettlement }: UseNormalProgressOptions) 
       }),
       ...s.history,
     ]);
+    if ((s as any).eventHistory && Array.isArray((s as any).eventHistory) && (s as any).eventHistory.length > 0) {
+      eventStoreRef.current.loadFromSave((s as any).eventHistory);
+    } else {
+      const syntheticEvents = generateEventHistoryFromLegacySave(s);
+      eventStoreRef.current.loadFromSave(syntheticEvents);
+    }
+    eventStoreRef.current.push({ type: "SAVE_RESTORE", source: `slot-${slot}` });
     setShowSlotPanel(null);
     setSlotList(getSlotList());
   }, [turn, floor]);
@@ -451,5 +680,11 @@ export function useNormalProgress({ showSettlement }: UseNormalProgressOptions) 
     loadFromSlot,
     deleteSaveSlot,
     openSlotPanel,
+    eventStore: eventStoreRef,
+    dispatchEvent,
+    syncStateFromEventStore,
+    verifyStateConsistency,
+    getReconstructedState,
+    reconstructionError,
   };
 }

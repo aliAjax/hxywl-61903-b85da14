@@ -1,7 +1,8 @@
 import { RoomType, Monster, GAME_CONSTANTS, RouteType } from "./gameConfig";
+import { GameEvent } from "../model/eventStore";
 
 export const SAVE_KEY = "dungeon-save-v1";
-export const CURRENT_SAVE_VERSION = 1;
+export const CURRENT_SAVE_VERSION = 2;
 export const SLOT_KEY_PREFIX = "dungeon-slot-";
 export const MAX_SLOTS = 5;
 
@@ -71,6 +72,7 @@ export interface SaveData {
   showRiskHint?: boolean;
   playerCharging?: boolean;
   currentRoute?: RouteType;
+  eventHistory?: GameEvent[];
 }
 
 export interface LoadResult {
@@ -242,6 +244,10 @@ export function validateSaveData(data: unknown): { valid: boolean; save: SaveDat
     if (!validateTurnRecord((data.history as unknown[])[i])) {
       return { valid: false, save: null, reason: `回合记录${i}数据异常` };
     }
+  }
+
+  if (data.eventHistory !== undefined && !Array.isArray(data.eventHistory)) {
+    return { valid: false, save: null, reason: "事件历史数据异常" };
   }
 
   return { valid: true, save: data as unknown as SaveData, reason: "" };
