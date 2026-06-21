@@ -1117,14 +1117,59 @@ export default function App() {
   }, []);
 
   const runReconstructionCheck = useCallback(() => {
-    const verification = verifyStateConsistency();
-    if (verification.valid) {
-      addDebugLog(`✅ 状态重构验证通过！事件数量: ${getReconstructedState ? getReconstructedState().turn : "N/A"}`);
+    const store = eventStore.current;
+    if (!store) return;
+
+    const reconstructed = store.rebuild();
+    const events = store.getEvents();
+    const totalEvents = store.getEventCount();
+
+    addDebugLog(`===== 🔍 完整状态重构验证 =====`);
+    addDebugLog(`事件总数: ${totalEvents}, 总楼层数: ${store.getTotalFloors()}`);
+
+    const mismatches: string[] = [];
+
+    if (reconstructed.hp !== hp) mismatches.push(`hp: 重构=${reconstructed.hp}, 实际=${hp}`);
+    if (reconstructed.coins !== coins) mismatches.push(`coins: 重构=${reconstructed.coins}, 实际=${coins}`);
+    if (reconstructed.keys !== keys) mismatches.push(`keys: 重构=${reconstructed.keys}, 实际=${keys}`);
+    if (reconstructed.potions !== potions) mismatches.push(`potions: 重构=${reconstructed.potions}, 实际=${potions}`);
+    if (reconstructed.floor !== floor) mismatches.push(`floor: 重构=B${reconstructed.floor}F, 实际=B${floor}F`);
+    if (reconstructed.status !== status) mismatches.push(`status: 重构=${reconstructed.status}, 实际=${status}`);
+    if (reconstructed.battleState !== battleState) mismatches.push(`battleState: 重构=${reconstructed.battleState}, 实际=${battleState}`);
+    if (reconstructed.battleRoomIdx !== battleRoomIdx) mismatches.push(`battleRoomIdx: 重构=${reconstructed.battleRoomIdx}, 实际=${battleRoomIdx}`);
+    if (reconstructed.playerCharging !== playerCharging) mismatches.push(`playerCharging: 重构=${reconstructed.playerCharging}, 实际=${playerCharging}`);
+    if (reconstructed.currentRoute !== currentRoute) mismatches.push(`currentRoute: 重构=${reconstructed.currentRoute}, 实际=${currentRoute}`);
+
+    if (reconstructed.stats.revealedRooms !== stats.revealedRooms) mismatches.push(`stats.revealedRooms: 重构=${reconstructed.stats.revealedRooms}, 实际=${stats.revealedRooms}`);
+    if (reconstructed.stats.trapHits !== stats.trapHits) mismatches.push(`stats.trapHits: 重构=${reconstructed.stats.trapHits}, 实际=${stats.trapHits}`);
+    if (reconstructed.stats.monstersDefeated !== stats.monstersDefeated) mismatches.push(`stats.monstersDefeated: 重构=${reconstructed.stats.monstersDefeated}, 实际=${stats.monstersDefeated}`);
+    if (reconstructed.stats.potionsUsed !== stats.potionsUsed) mismatches.push(`stats.potionsUsed: 重构=${reconstructed.stats.potionsUsed}, 实际=${stats.potionsUsed}`);
+    if (reconstructed.stats.fleeCount !== stats.fleeCount) mismatches.push(`stats.fleeCount: 重构=${reconstructed.stats.fleeCount}, 实际=${stats.fleeCount}`);
+
+    let boardMismatches = 0;
+    if (reconstructed.board.length !== board.length) {
+      mismatches.push(`board.length: 重构=${reconstructed.board.length}, 实际=${board.length}`);
     } else {
-      addDebugLog(`❌ 状态重构验证失败: ${verification.mismatches.length} 处不一致`);
-      verification.mismatches.forEach((m: string) => addDebugLog(`  - ${m}`));
+      for (let i = 0; i < board.length; i++) {
+        const r = reconstructed.board[i];
+        const a = board[i];
+        if (r.type !== a.type) { boardMismatches++; mismatches.push(`board[${i}].type: 重构=${r.type}, 实际=${a.type}`); }
+        if (r.revealed !== a.revealed) { boardMismatches++; mismatches.push(`board[${i}].revealed: 重构=${r.revealed}, 实际=${a.revealed}`); }
+        if (r.defeated !== a.defeated) { boardMismatches++; mismatches.push(`board[${i}].defeated: 重构=${r.defeated}, 实际=${a.defeated}`); }
+      }
     }
-  }, [verifyStateConsistency, getReconstructedState, addDebugLog]);
+
+    if (mismatches.length === 0) {
+      addDebugLog(`✅ 验证通过！所有 ${totalEvents} 个事件正确重建了全部状态`);
+      addDebugLog(`   状态: B${reconstructed.floor}F | HP ${reconstructed.hp} | 金币 ${reconstructed.coins} | 房间揭示 ${reconstructed.stats.revealedRooms}`);
+    } else {
+      addDebugLog(`❌ 验证失败！发现 ${mismatches.length} 处不一致（含 ${boardMismatches} 处地图错误）`);
+      mismatches.slice(0, 15).forEach((m) => addDebugLog(`  - ${m}`));
+      if (mismatches.length > 15) {
+        addDebugLog(`  ... 还有 ${mismatches.length - 15} 处不一致`);
+      }
+    }
+  }, [eventStore, hp, coins, keys, potions, floor, status, battleState, battleRoomIdx, playerCharging, currentRoute, stats, board, addDebugLog]);
 
   const showEventHistory = useCallback(() => {
     const reconstructed = getReconstructedState();

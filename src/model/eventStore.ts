@@ -270,13 +270,6 @@ export function applyEvent(state: GameState, event: GameEvent): GameState {
     case "BATTLE_ATTACK": {
       if (!state.currentMonster) return state;
       const updatedMonster: Monster = { ...state.currentMonster, hp: event.monsterHpAfter };
-      if (event.monsterDefeated) {
-        return {
-          ...state,
-          currentMonster: updatedMonster,
-          playerCharging: false,
-        };
-      }
       return {
         ...state,
         hp: event.playerHpAfter,
@@ -560,14 +553,44 @@ export function verifyReconstruction(
   }
 
   if (expectedState.board) {
-    for (let i = 0; i < expectedState.board.length; i++) {
-      const expectedRoom = expectedState.board[i];
-      const actualRoom = reconstructed.board[i];
-      if (expectedRoom.revealed !== actualRoom.revealed) {
-        mismatches.push(`board[${i}].revealed: expected ${expectedRoom.revealed}, got ${actualRoom.revealed}`);
+    if (expectedState.board.length !== reconstructed.board.length) {
+      mismatches.push(`board.length: expected ${expectedState.board.length}, got ${reconstructed.board.length}`);
+    } else {
+      for (let i = 0; i < expectedState.board.length; i++) {
+        const expectedRoom = expectedState.board[i];
+        const actualRoom = reconstructed.board[i];
+        if (expectedRoom.type !== actualRoom.type) {
+          mismatches.push(`board[${i}].type: expected ${expectedRoom.type}, got ${actualRoom.type}`);
+        }
+        if (expectedRoom.revealed !== actualRoom.revealed) {
+          mismatches.push(`board[${i}].revealed: expected ${expectedRoom.revealed}, got ${actualRoom.revealed}`);
+        }
+        if (expectedRoom.defeated !== actualRoom.defeated) {
+          mismatches.push(`board[${i}].defeated: expected ${expectedRoom.defeated}, got ${actualRoom.defeated}`);
+        }
       }
-      if (expectedRoom.defeated !== actualRoom.defeated) {
-        mismatches.push(`board[${i}].defeated: expected ${expectedRoom.defeated}, got ${actualRoom.defeated}`);
+    }
+  }
+
+  if (expectedState.currentMonster !== undefined) {
+    const expected = expectedState.currentMonster;
+    const actual = reconstructed.currentMonster;
+    if (expected === null && actual !== null) {
+      mismatches.push("currentMonster: expected null, got non-null");
+    } else if (expected !== null && actual === null) {
+      mismatches.push("currentMonster: expected non-null, got null");
+    } else if (expected !== null && actual !== null) {
+      if (expected.name !== actual.name) {
+        mismatches.push(`currentMonster.name: expected ${expected.name}, got ${actual.name}`);
+      }
+      if (expected.hp !== actual.hp) {
+        mismatches.push(`currentMonster.hp: expected ${expected.hp}, got ${actual.hp}`);
+      }
+      if (expected.maxHp !== actual.maxHp) {
+        mismatches.push(`currentMonster.maxHp: expected ${expected.maxHp}, got ${actual.maxHp}`);
+      }
+      if (expected.attack !== actual.attack) {
+        mismatches.push(`currentMonster.attack: expected ${expected.attack}, got ${actual.attack}`);
       }
     }
   }
