@@ -198,11 +198,21 @@ export function verifyMap(rooms: RoomType[], maxPathDamage: number): Verificatio
   if (!keyReachable) issues.push("钥匙不可达");
   if (!exitReachable) issues.push("出口不可达");
   if (!keyToExitReachable) issues.push("钥匙到出口的路径不连通");
-  const { damage: totalDamage, path } = dijkstraMinDamage(rooms, START_IDX, exitIdx);
-  const { damage: keyDamage } = dijkstraMinDamage(rooms, START_IDX, keyIdx);
-  const { damage: exitDamage } = dijkstraMinDamage(rooms, keyIdx, exitIdx);
-  const pathDamageAcceptable = keyDamage + exitDamage <= maxPathDamage;
-  if (!pathDamageAcceptable) {
+  let totalDamage = Infinity;
+  let keyDamage = Infinity;
+  let exitDamage = Infinity;
+  let path: number[] = [];
+  if (keyIdx !== -1 && exitIdx !== -1) {
+    ({ damage: totalDamage, path } = dijkstraMinDamage(rooms, START_IDX, exitIdx));
+    ({ damage: keyDamage } = dijkstraMinDamage(rooms, START_IDX, keyIdx));
+    ({ damage: exitDamage } = dijkstraMinDamage(rooms, keyIdx, exitIdx));
+  } else if (exitIdx !== -1) {
+    ({ damage: totalDamage, path } = dijkstraMinDamage(rooms, START_IDX, exitIdx));
+  } else if (keyIdx !== -1) {
+    ({ damage: keyDamage, path } = dijkstraMinDamage(rooms, START_IDX, keyIdx));
+  }
+  const pathDamageAcceptable = keyIdx !== -1 && exitIdx !== -1 ? keyDamage + exitDamage <= maxPathDamage : false;
+  if (!pathDamageAcceptable && keyIdx !== -1 && exitIdx !== -1) {
     issues.push(`路径伤害(${keyDamage + exitDamage})超过上限(${maxPathDamage})`);
   }
   let noTrapDeadEnd = true;
